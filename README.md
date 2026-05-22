@@ -1,0 +1,501 @@
+# Warranty Risk Prediction Prototype
+
+> **Project status — Prototype complete.**  
+> All five pipeline stages are implemented, validated in a clean notebook, and modularized into a Python package with an interactive Streamlit UI. This document describes what has been built, how the system works, and how to run it.
+
+---
+
+## Table of Contents
+
+1. [Motivation](#1-motivation)
+2. [Overall Pipeline Architecture](#2-overall-pipeline-architecture)
+3. [Pipeline Stages](#3-pipeline-stages)
+   - [Stage 1 — Manufacturing Simulation](#stage-1--manufacturing-simulation)
+   - [Stage 2 — Warranty Claim Labeling](#stage-2--warranty-claim-labeling)
+   - [Stage 3 — Tolerance Optimization](#stage-3--tolerance-optimization)
+   - [Stage 4 — Predictive Modeling](#stage-4--predictive-modeling)
+   - [Stage 5 — LIME Explanation](#stage-5--lime-explanation)
+4. [Plant & Sensor Configuration](#4-plant--sensor-configuration)
+5. [Repository Structure](#5-repository-structure)
+6. [Python Package — `warranty_risk`](#6-python-package--warranty_risk)
+7. [Interactive UI — Streamlit App](#7-interactive-ui--streamlit-app)
+8. [How to Run](#8-how-to-run)
+9. [Key Design Decisions](#9-key-design-decisions)
+10. [Completed Work & Next Steps](#10-completed-work--next-steps)
+
+---
+
+## 1. Motivation
+
+Warranty claims are a significant cost driver in automotive manufacturing. Identifying at-risk vehicles *before* they reach the customer — using manufacturing sensor data — can reduce recall rates, lower warranty reserves, and guide process improvement.
+
+This prototype builds and validates an end-to-end pipeline that:
+- Simulates a realistic automotive assembly plant with six sensor-equipped stations
+- Labels vehicles with warranty risk using a statistically grounded stochastic model
+- Optimizes per-sensor quality tolerances using a Genetic Algorithm
+- Trains and evaluates multiple ML classifiers for warranty risk prediction
+- Explains individual vehicle predictions using LIME (Local Interpretable Model-agnostic Explanations)
+
+The pipeline is designed to be modular so that each stage can be replaced with real plant data and models as the project matures.
+
+---
+
+## 2. Overall Pipeline Architecture
+
+![Overall Pipeline](outputs/diagrams/01_overall_pipeline.png)
+
+Data flows left-to-right through five stages. The manufacturing simulator produces raw sensor records; these are aggregated into a feature matrix, labeled with warranty risk, enriched with GA-optimized tolerance features, and finally fed to ML models whose predictions are explained by LIME.
+
+---
+
+## 3. Pipeline Stages
+
+### Stage 1 — Manufacturing Simulation
+
+![Simulator Breakdown](outputs/diagrams/02_simulator_breakdown.png)
+
+**What it does:** Generates synthetic sensor readings for 500 vehicles passing through 6 assembly stations.
+
+**Key design choices:**
+
+| Factor | Description |
+|--------|-------------|
+| **AR(1) time-series** | Sensor values follow an autoregressive process: `v[t] = 0.85 × v[t-1] + 0.15 × nominal + noise`. This produces realistic temporal autocorrelation rather than independent random samples. |
+| **Drift factor** | Each vehicle accumulates a linear drift as production progresses (`drift = vehicle_index / 500`), simulating gradual process degradation over a production run. |
+| **Environmental stress** | 3% of vehicles experience a power-outage event (`env_stress = 1`), which adds an additional 20% drift to all their sensor readings. |
+| **Shift noise** | Night-shift vehicles (shift_id = 2) have 10% higher sensor variance, reflecting real-world operator fatigue or calibration drift. |
+| **Sensor types** | Three types are supported: *time-series* (multiple readings per vehicle, AR(1)), *scalar* (single reading, AR(1)), *binary* (wiring continuity — Bernoulli with drift-dependent failure rate), *categorical* (visual defect — ok / minor / major with drift-dependent probabilities). |
+
+**Output:** `data/raw/manufacturing_data.csv` — ~18,400 rows (500 vehicles × 6 sensors × variable readings per sensor).
+
+---
+
+### Stage 2 — Warranty Claim Labeling
+
+**What it does:** Assigns a binary warranty claim label (0/1) to each vehicle based on a stochastic sigmoid function of sensor risk.
+
+**How it works:**
+
+```
+risk_seed  = w₁ × Vibration + w₂ × Torque + w₃ × Weld Temp
+             + w₄ × Visual Defect + w₅ × Wiring Continuity
+risk_norm  = (risk_seed − min) / (max − min)          ← normalize to [0, 1]
+p_claim    = sigmoid(k × (risk_norm − threshold))     ← k=10, threshold scanned adaptively
+claim      ~ Binomial(1, p_claim)                     ← stochastic draw
+```
+
+Paint thickness is excluded from the risk score because cosmetic variation has low correlation with functional warranty claims.
+
+The threshold is scanned adaptively (0.50 → 0.98) until the expected claim rate is ≤ 12%, producing a realistic ~10% minority class.
+
+**Output:** `data/raw/manufacturing_warranty_data.csv` — sensor records with `warranty_claim` column appended.
+
+---
+
+### Stage 3 — Tolerance Optimization
+
+![Tolerance Optimization Breakdown](outputs/diagrams/03_tolerance_optimization.png)
+
+**What it does:** Uses a Genetic Algorithm (GA) to find the tightest per-sensor tolerance window [lower, upper] that minimizes the total cost of quality failures.
+
+**Cost model:**
+
+| Failure type | Meaning | Cost weight |
+|---|---|---|
+| **False Accept (FA)** | Vehicle passes all tolerances but later makes a warranty claim | `C_FA = 0.1` per claim type |
+| **False Reject (FN)** | Vehicle fails a tolerance but would not have made a claim (unnecessary rework) | `C_FN = 2.0` per claim type |
+
+FN is weighted 20× higher than FA because unnecessary rework is more expensive than the risk of accepting a borderline vehicle.
+
+**GA configuration:**
+
+| Parameter | Value |
+|---|---|
+| Library | [pymoo](https://pymoo.org/) |
+| Algorithm | Single-objective GA |
+| Population size | 200 |
+| Generations | 50 |
+| Crossover | SBX (η=15, p=0.9) |
+| Mutation | Polynomial (η=20, p=0.2) |
+
+The GA optimizes 2N decision variables (N lower bounds + N upper bounds for N sensors) subject to the constraint `lower[i] < upper[i]` for all sensors.
+
+**Tolerance features added to the feature matrix:**
+
+| Feature | Description |
+|---|---|
+| `within_tolerance_all` | 1 if all sensor means are within their optimized bounds, else 0 |
+| `out_of_tolerance_count` | Number of sensors (0–6) whose mean falls outside optimized bounds |
+
+**Output:** Optimized bounds table; two new columns appended to the feature matrix.
+
+---
+
+### Stage 4 — Predictive Modeling
+
+![Prediction Breakdown](outputs/diagrams/04_prediction_breakdown.png)
+
+**What it does:** Trains 9 classifiers to predict warranty claims and selects the best by F1 score. Evaluates baseline (time-series features only) vs. enhanced (time-series + tolerance features) to quantify the value added by Stage 3.
+
+**Feature engineering — padding & masking:**  
+Because time-series sensors produce a variable number of readings per vehicle, all sequences are zero-padded to the maximum observed length. A binary mask column (`sensor_t{i}_mask`) records which positions contain real measurements vs. padding. This preserves temporal structure without discarding information.
+
+**Models evaluated:**
+
+| Model | Notes |
+|---|---|
+| Random Forest | `class_weight="balanced"` |
+| Gradient Boosting | — |
+| Logistic Regression | `class_weight="balanced"`, scaled |
+| MLP (64→32) | Scaled |
+| Decision Tree | `class_weight="balanced"` |
+| AdaBoost | — |
+| KNN (k=5) | Scaled |
+| Naive Bayes | — |
+| SVM (RBF) | `class_weight="balanced"`, scaled |
+
+**Class imbalance handling:**  
+`class_weight="balanced"` prevents models from predicting all-zeros on the ~12% minority class. The decision threshold is also moved from the default 0.5 to an optimal value computed from the precision-recall curve (maximizing F1), typically landing near 0.12–0.15.
+
+**Baseline vs. Enhanced comparison:**  
+Both variants use `clone(best_model)` — an identical, freshly initialized copy of whichever model won the leaderboard — so any metric difference is attributable purely to the addition of the two tolerance features.
+
+**Output:** Model leaderboard sorted by F1; confusion matrices and ROC curves for both variants (`outputs/plots/baseline_vs_enhanced.png`).
+
+---
+
+### Stage 5 — LIME Explanation
+
+![LIME Explanation Breakdown](outputs/diagrams/05_lime_explanation.png)
+
+**What it does:** Provides human-interpretable explanations of individual vehicle warranty predictions.
+
+**How LIME works:** For a given vehicle, LIME fits a simple local linear model in the neighborhood of that vehicle's feature vector. The linear coefficients are the "feature importances" — positive weights increase predicted risk, negative weights decrease it.
+
+**Two explanation modes:**
+
+| Mode | What it shows |
+|---|---|
+| **Single vehicle** | Top 10 features for the highest-risk vehicle: combined bar chart, risk-increasing (orange), risk-decreasing (blue) |
+| **Global (balanced)** | Mean LIME weights aggregated over 5 high-risk + 5 low-risk vehicles — shows which features matter most across the test set |
+
+**Output:** LIME bar charts in `outputs/plots/`; interactive HTML explanation in `outputs/plots/lime_explanation.html`.
+
+---
+
+## 3b. Sample Results
+
+### Architecture Diagrams
+
+All five architecture diagrams are embedded inline within their respective pipeline stage sections above. The plant station configuration diagram is in Section 4.
+
+---
+
+### Stage 3 — Tolerance Optimization Results
+
+**Original vs. Optimized Limits**
+
+![Tolerance Limits Comparison](outputs/plots/tolerance_limits_comparison.png)
+
+Grouped bars show original (±2σ) limits vs. GA-optimized limits per sensor. The dashed line is the optimized target (midpoint of bounds).
+
+---
+
+**Normalized Z-Score Ranges**
+
+![Z-Score Comparison](outputs/plots/tolerance_zscore_comparison.png)
+
+Tolerance windows expressed in standard deviations from the sensor mean, allowing direct comparison across sensors with different physical units.
+
+---
+
+**Per-Sensor Tolerance Violations**
+
+![Tolerance Violations Per Sensor](outputs/plots/tolerance_violations_per_sensor.png)
+
+Number of vehicles whose mean sensor value falls outside the optimized bounds for each sensor. Red = violations present, green = no violations.
+
+---
+
+**Overall Vehicle Tolerance Status**
+
+![Vehicle Tolerance Status](outputs/plots/tolerance_vehicle_status.png)
+
+Count of vehicles that pass all six sensor tolerances simultaneously vs. those with at least one out-of-bounds sensor.
+
+---
+
+**Data Distribution vs. Optimized Limits**
+
+![Tolerance Distribution vs Limits](outputs/plots/tolerance_distribution_vs_limits.png)
+
+Box plots of the full vehicle population per sensor. Red dashed lines mark the GA-optimized lower and upper bounds.
+
+---
+
+### Stage 4 — Prediction Results
+
+**Baseline vs. Enhanced Comparison**
+
+![Baseline vs Enhanced](outputs/plots/baseline_vs_enhanced.png)
+
+Left column: Baseline model (time-series features only). Right column: Enhanced model (time-series + two GA-derived tolerance features). Confusion matrices and ROC curves show the improvement in recall and AUC from adding tolerance information.
+
+---
+
+### Stage 5 — LIME Explanation Results
+
+**Single Vehicle — Highest-Risk Vehicle**
+
+![LIME Instance Explanation](outputs/plots/lime_instance_explanation.png)
+
+Three-panel LIME chart for the highest-risk vehicle in the test set: combined impact (left), risk-increasing features in orange (center), risk-decreasing features in blue (right).
+
+---
+
+**Global LIME — Aggregated Feature Importance**
+
+![Global LIME](outputs/plots/lime_global_balanced.png)
+
+Aggregated LIME weights over 5 high-risk + 5 low-risk test vehicles. Orange bars increase warranty risk; blue bars decrease it. Features with the largest absolute weight are the most influential across the test set.
+
+---
+
+## 4. Plant & Sensor Configuration
+
+### Station Layout
+
+![Plant Station Configuration](outputs/diagrams/06_plant_station_config.png)
+
+Each station is color-coded by type. Arrows show the production flow as defined in `plant_config.json`. Both Body Assembly and Paint Shop feed into Chassis Assembly; Chassis Assembly branches to both Electrical Install and Final Inspection; these converge at Final Inspection before the vehicle reaches End-to-End Test.
+
+The plant is defined in `data/config/plant_config.json`. Six stations are arranged in the following order:
+
+```
+STN_BODY (Body Assembly)
+    └─► STN_CHASSIS (Chassis Assembly)
+            ├─► STN_ELECTRICAL (Electrical Install)
+            │       └─► STN_FINAL (Final Inspection)
+            │                └─► STN_E2E (End-to-End Test)
+            └─► STN_FINAL
+STN_PAINT (Paint Shop)
+    └─► STN_CHASSIS
+```
+
+**Sensors:**
+
+| Station | Sensor | Type | Range / Unit | Sampling |
+|---|---|---|---|---|
+| Body Assembly | Welding Temperature | Time-series | 450–520 °C | 2 Hz |
+| Paint Shop | Paint Thickness | Scalar | 80–120 µm | — |
+| Chassis Assembly | Wheel Torque | Time-series | 30–50 Nm | 5 Hz |
+| Electrical Install | Wiring Continuity | Binary | pass/fail | — |
+| Final Inspection | Visual Defect | Categorical | ok/minor/major | — |
+| End-to-End Test | Vehicle Vibration | Time-series | 0–4 mm/s | 10 Hz |
+
+---
+
+## 5. Repository Structure
+
+```
+warranty-risk-prototype/
+│
+├── data/
+│   ├── config/
+│   │   └── plant_config.json              ← Plant and sensor configuration
+│   └── raw/
+│       ├── vehicle_metadata.csv           ← 500 vehicles (generated)
+│       ├── manufacturing_data.csv         ← ~18,400 sensor records
+│       └── manufacturing_warranty_data.csv ← sensor records + warranty_claim
+│
+├── outputs/
+│   ├── diagrams/                          ← 6 architecture & plant diagrams (PNG)
+│   │   ├── 01_overall_pipeline.png
+│   │   ├── 02_simulator_breakdown.png
+│   │   ├── 03_tolerance_optimization.png
+│   │   ├── 04_prediction_breakdown.png
+│   │   ├── 05_lime_explanation.png
+│   │   └── 06_plant_station_config.png
+│   └── plots/                             ← All pipeline result visualizations (PNG)
+│       ├── tolerance_limits_comparison.png
+│       ├── tolerance_zscore_comparison.png
+│       ├── tolerance_violations_per_sensor.png
+│       ├── tolerance_vehicle_status.png
+│       ├── tolerance_distribution_vs_limits.png
+│       ├── baseline_vs_enhanced.png
+│       ├── lime_instance_explanation.png
+│       └── lime_global_balanced.png
+│
+├── warranty_risk_app/                     ← Modular Python package + Streamlit UI
+│   ├── app.py                             ← Streamlit application entry point
+│   ├── requirements.txt
+│   └── warranty_risk/                     ← Python package
+│       ├── config.py
+│       ├── pipeline.py                    ← End-to-end orchestrator
+│       ├── simulator/
+│       │   ├── vehicle.py
+│       │   └── manufacturing.py
+│       ├── labels/
+│       │   ├── features.py
+│       │   └── sigmoid.py
+│       ├── optimization/
+│       │   ├── ga_optimizer.py
+│       │   └── tolerance_features.py
+│       ├── prediction/
+│       │   ├── padding.py
+│       │   └── models.py
+│       └── explanation/
+│           └── lime_explainer.py
+│
+├── requirements.txt                       ← Root-level dependencies
+└── README.md
+```
+
+---
+
+## 6. Python Package — `warranty_risk`
+
+The pipeline logic is fully encapsulated in the `warranty_risk` package under `warranty_risk_app/`. Each module is independently importable and returns pure data structures (DataFrames, arrays, dicts) with no global state.
+
+| Module | Key function / class | What it returns |
+|---|---|---|
+| `config` | `load_config()`, `get_stations()` | Plant config dict, stations list |
+| `simulator.vehicle` | `generate_vehicle_metadata(n)` | DataFrame: 500 vehicles with shift/env fields |
+| `simulator.manufacturing` | `generate_manufacturing_data(vehicle_df, stations)` | DataFrame: raw sensor records |
+| `labels.features` | `build_feature_matrix(manufacturing_df)` | DataFrame: one row per vehicle, one col per sensor |
+| `labels.sigmoid` | `generate_warranty_labels(feature_df)` | `(feature_df_with_label, meta_dict)` |
+| `optimization.ga_optimizer` | `run_ga_optimization(...)` | Dict with optimized bounds and GA stats |
+| `optimization.tolerance_features` | `compute_tolerance_features(...)` | feature_df with 2 new tolerance columns |
+| `prediction.padding` | `build_padded_matrix(manufacturing_df, feature_df)` | Wide feature matrix with time-step columns |
+| `prediction.models` | `train_and_select(ml_data)` | Best model, all metrics, train/test splits |
+| `prediction.models` | `compare_baseline_enhanced(train_result)` | Metrics for both variants |
+| `explanation.lime_explainer` | `explain_vehicle(...)` | LIME DataFrame + probability |
+| `explanation.lime_explainer` | `global_lime(...)` | Aggregated feature weights + chart |
+| `pipeline` | `WarrantyRiskPipeline().run()` | All artifacts as instance attributes |
+
+**Using the orchestrator in a script or notebook:**
+
+```python
+import sys
+sys.path.insert(0, "warranty_risk_app")
+
+from warranty_risk.pipeline import WarrantyRiskPipeline
+
+pipe = WarrantyRiskPipeline(n_vehicles=500, n_generations=50)
+pipe.run()
+
+print(pipe.results_df)               # Model leaderboard
+print(pipe.lime_result["lime_df"])   # LIME table for highest-risk vehicle
+print(pipe.label_meta)               # Claim rate, sigmoid threshold
+print(pipe.ga_result["df_results"])  # Optimized tolerance limits
+```
+
+---
+
+## 7. Interactive UI — Streamlit App
+
+The Streamlit app provides a browser-based interface to run the full pipeline and inspect results at each stage without writing any code.
+
+**Five tabs:**
+
+| Tab | Contents |
+|---|---|
+| 1 · Simulation | Vehicle count, sensor record count, vehicle metadata table, sensor statistics |
+| 2 · Labels | Claim count, claim rate, sigmoid threshold, feature matrix preview, claim distribution chart |
+| 3 · Tolerance Optimization | Optimized bounds table, grouped bar chart (original vs. optimized), tolerance feature summary |
+| 4 · Prediction | Model leaderboard (all 9 models by F1), Baseline vs. Enhanced comparison table, confusion matrices, ROC curves |
+| 5 · LIME Explanation | Three-panel LIME chart for highest-risk vehicle, feature table, global LIME aggregated chart |
+
+The sidebar allows configuration of vehicle count, GA generations, GA population size, and cost weights (C_FA, C_FN) before running.
+
+---
+
+## 8. How to Run
+
+### Prerequisites
+
+- Python 3.10 or 3.11
+- Terminal open at the **repository root** (`warranty-risk-prototype/`)
+
+### Step 1 — Create a virtual environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\activate         # Windows
+```
+
+### Step 2 — Install dependencies
+
+```bash
+pip install -r warranty_risk_app/requirements.txt
+```
+
+### Step 3 — Launch the Streamlit app
+
+```bash
+streamlit run warranty_risk_app/app.py
+```
+
+The browser opens automatically at `http://localhost:8501`. Click **▶ Run Pipeline** in the sidebar. The full run takes approximately 1–2 minutes (dominated by GA optimization and model training).
+
+### Running via the Python package directly
+
+```python
+import sys
+sys.path.insert(0, "warranty_risk_app")
+
+from warranty_risk.pipeline import WarrantyRiskPipeline
+
+pipe = WarrantyRiskPipeline(n_vehicles=500, n_generations=50)
+pipe.run()
+print(pipe.results_df)
+```
+
+---
+
+## 9. Key Design Decisions
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| **Label generation** | Stochastic sigmoid (not NN or top-N%) | Eliminates circular dependency; gives downstream ML a genuine learning task |
+| **Sensor simulation** | AR(1) with drift, env stress, shift noise | Interpretable, parameterized; captures realistic process variation without requiring historical data |
+| **Claim rate target** | ~10% (minority class) | Reflects realistic automotive warranty rates; imbalance handled algorithmically |
+| **Class imbalance** | `class_weight="balanced"` + optimal threshold | Prevents degenerate all-zeros predictions; threshold tuned to maximize F1 |
+| **Tolerance optimization** | Static GA bounds (not adaptive/real-time) | Bounds computed once from training data; suitable for offline process qualification |
+| **Model selection** | F1 score (not accuracy) | Accuracy is misleading at ~12% class prevalence; F1 balances precision and recall |
+| **Baseline vs. Enhanced** | `clone(best_model)` for both | Ensures the comparison isolates the effect of tolerance features, not model differences |
+| **GA optimizer code** | Preserved verbatim from original `.py` file | Maintains consistency with the validated algorithm from prior work |
+
+---
+
+## 10. Completed Work & Next Steps
+
+### What is complete
+
+- [x] Synthetic plant and sensor configuration (`plant_config.json`)
+- [x] Vehicle and manufacturing data simulator with environmental factors (shift noise, power-outage drift)
+- [x] Stochastic sigmoid warranty label generation (no circular dependency)
+- [x] GA-based tolerance optimization using pymoo
+- [x] Tolerance feature engineering (within-bounds flag and out-of-bounds count)
+- [x] Variable-length time-series padding and masking
+- [x] 9-model classifier evaluation with class-imbalance handling and optimal threshold selection
+- [x] Baseline vs. Enhanced comparison using identical model architecture (`clone`)
+- [x] LIME explanations — single vehicle (3-panel) and global (balanced sample)
+- [x] Clean end-to-end notebook (`05_pipeline_clean.ipynb`)
+- [x] Architecture diagrams for all five pipeline stages
+- [x] Modular Python package (`warranty_risk_app/warranty_risk/`)
+- [x] Streamlit interactive UI with configurable parameters
+
+### Possible next steps
+
+- [ ] **Real data integration** — Replace the simulator with actual plant sensor feeds; the package API accepts any DataFrame matching the expected schema
+- [ ] **Multi-objective optimization** — Replace single-objective GA with NSGA-II (minimize cost vs. maximize throughput) for Pareto-front analysis; `pymoo` supports this natively
+- [ ] **Temporal models** — Replace padded-feature classifiers with LSTM or Transformer architecture for the time-series sensors
+- [ ] **Online / real-time mode** — Score each vehicle incrementally as it moves through stations rather than batch post-production
+- [ ] **Multi-plant generalization** — Parameterize the plant config to support multiple facilities with different station layouts
+- [ ] **Production deployment** — Containerize with Docker; expose predictions via a REST API; connect the Streamlit UI to live data
+
+---
+
+*Prototype developed as part of grant research on predictive quality management in automotive manufacturing.*

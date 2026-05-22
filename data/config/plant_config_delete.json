@@ -1,0 +1,43 @@
+
+{
+  "plant_id": "PLANT_A",
+  "stations": [
+    {
+      "station_id": "S10",
+      "station_name": "Torque Station",
+      "station_type": "assembly",
+      "capacity_per_hour": 60,
+      "sensors": [
+        {
+          "sensor_id": "TQ_1",
+          "sensor_type": "torque",
+          "unit": "Nm",
+          "lower_limit": 30,
+          "upper_limit": 50
+        }
+      ]
+    },
+    {
+      "station_id": "S20",
+      "station_name": "Temperature Station",
+      "station_type": "inspection",
+      "capacity_per_hour": 80,
+      "sensors": [
+        {
+          "sensor_id": "TEMP_1",
+          "sensor_type": "temperature",
+          "unit": "C",
+          "lower_limit": 60,
+          "upper_limit": 90
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from_station": "S10",
+      "to_station": "S20",
+      "type": "series"
+    }
+  ]
+}

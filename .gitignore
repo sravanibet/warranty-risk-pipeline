@@ -1,0 +1,25 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# keep notebooks private
+notebooks/
+
+# keep raw data private
+data/raw/
+
+# compiled model (large binary)
+notebooks/warranty_best_model.pkl
+
+# private documents
+*.docx
+*.pdf
+
+# VS Code workspace settings
+.vscode/
+
+# generated plot outputs (not needed by app)
+outputs/plots/
