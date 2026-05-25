@@ -489,13 +489,16 @@ print(pipe.results_df)
 
 ### Possible next steps
 
-- [ ] **Real data integration** — Replace the simulator with actual plant sensor feeds; the package API accepts any DataFrame matching the expected schema
-- [ ] **Multi-objective optimization** — Replace single-objective GA with NSGA-II (minimize cost vs. maximize throughput) for Pareto-front analysis; `pymoo` supports this natively
-- [ ] **Temporal models** — Replace padded-feature classifiers with LSTM or Transformer architecture for the time-series sensors
-- [ ] **Online / real-time mode** — Score each vehicle incrementally as it moves through stations rather than batch post-production
-- [ ] **Multi-plant generalization** — Parameterize the plant config to support multiple facilities with different station layouts
-- [ ] **Production deployment** — Containerize with Docker; expose predictions via a REST API; connect the Streamlit UI to live data
+- [ ] **Real Plant Data Integration** — Replace the simulator with actual plant sensor feeds; the package API accepts any DataFrame matching the expected schema
+- [ ] **End-to-End Pipeline Adaptation for Live Data** — Adapt preprocessing, feature engineering, tolerance optimization, and model retraining to handle the characteristics of real sensor data (noise, missing readings, calibration drift)
+- [ ] **Multi-Facility Scalability** — Parameterize the plant config to support multiple facilities with different station layouts and sensor configurations
+- [ ] **Multi-Category Warranty Classification** — Extend the label schema from binary (claim / no-claim) to multi-class warranty categories aligned with real claim codes, enabling more targeted root-cause diagnosis
 
 ---
 
 *Prototype developed as part of grant research on predictive quality management in automotive manufacturing.*
+
+---
+
+**Developed by:** Noor-E Jannat, PhD Candidate  
+Industrial & Systems Engineering (ISE) Department, Wayne State University

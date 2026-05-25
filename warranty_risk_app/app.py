@@ -1,6 +1,10 @@
 """
 Warranty Risk Prototype — Streamlit UI
 Run: streamlit run warranty_risk_app/app.py
+
+Developed by: Noor-E Jannat, PhD Candidate
+              Industrial & Systems Engineering (ISE) Department
+              Wayne State University
 """
 import sys
 from pathlib import Path
