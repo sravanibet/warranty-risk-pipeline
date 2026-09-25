@@ -1,6 +1,12 @@
 """
-Warranty Risk Prototype — Streamlit UI
+Quality Monitoring Agent — Streamlit UI
 Run: streamlit run warranty_risk_app/app.py
+
+Four phases, orchestrated by warranty_risk.agent.QualityMonitoringAgent:
+  1. Setup    — register + confirm the facility configuration
+  2. Data     — upload real data or simulate it
+  3. Learning — tolerance optimization + model training
+  4. Operate  — score vehicles and explain why
 
 Developed by: Noor-E Jannat, PhD Candidate
               Industrial & Systems Engineering (ISE) Department
@@ -22,32 +28,38 @@ from sklearn.metrics import confusion_matrix, roc_curve, auc as sk_auc
 plt.rcParams["figure.dpi"] = 150
 plt.rcParams["savefig.dpi"] = 150
 
-from warranty_risk.pipeline import WarrantyRiskPipeline
-from warranty_risk.explanation.lime_explainer import plot_lime_instance, explain_vehicle, global_lime
-from warranty_risk.config import load_config
-from warranty_risk.optimization.ga_optimizer import run_ga_optimization
-from warranty_risk.optimization.tolerance_features import compute_tolerance_features
-from warranty_risk.prediction.models import train_and_select, SCALE_NEEDED
-from warranty_risk.preprocessing.preprocessor import auto_preprocess
+from warranty_risk.agent import QualityMonitoringAgent
+from warranty_risk.agent.orchestrator import SIMULATOR_AVAILABLE
 
 # ── Page setup ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Warranty Risk Pipeline",
+    page_title="Quality Monitoring Agent",
     page_icon="🏭",
     layout="wide",
 )
-st.title("Warranty Risk Prediction Pipeline")
+st.title("Quality Monitoring Agent")
+st.caption(
+    "The agent orchestrates and explains each phase; the pipeline modules do the "
+    "actual computation."
+)
 
-# ── Session state init — must come before sidebar ─────────────────────────────
+# ── Session state init ──────────────────────────────────────────────────────────
 for key, default in [
-    ("pipe", None),
-    ("sim_preprocess_report", None),
-    ("ext", {}),
+    ("agent", QualityMonitoringAgent()),
+    ("phase_setup_confirmed", False),
+    ("phase_data_ready", False),
+    ("phase_learn_done", False),
+    ("data_result", None),
+    ("learn_result", None),
+    ("operate_result", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
 
-# ── Shared rendering helpers ──────────────────────────────────────────────────
+agent = st.session_state.agent
+
+
+# ── Shared rendering helpers (unchanged from the original tab layout) ──────────
 
 def _render_preprocess_report(report: list, df_before, df_after):
     """Render the auto-preprocessing report with before/after comparison."""
@@ -92,7 +104,7 @@ def _render_preprocess_report(report: list, df_before, df_after):
 
 
 def _render_ga_tab(ga_result: dict, feature_df: pd.DataFrame, c_fa: float):
-    """Render Tolerance Optimization tab content."""
+    """Render Tolerance Optimization section content."""
     st.subheader("GA Tolerance Optimization")
     if not ga_result.get("success"):
         st.error("GA optimization did not find a valid solution.")
@@ -195,7 +207,7 @@ def _render_ga_tab(ga_result: dict, feature_df: pd.DataFrame, c_fa: float):
 
 
 def _render_prediction_tab(train_result: dict, results_df: pd.DataFrame):
-    """Render Model Training & Selection tab content."""
+    """Render Model Training & Selection section content."""
     from sklearn.metrics import f1_score, precision_score, recall_score
 
     st.subheader("Model Training & Selection (Tolerance-Enhanced Features)")
@@ -256,7 +268,7 @@ def _render_prediction_tab(train_result: dict, results_df: pd.DataFrame):
 
 
 def _render_lime_tab(lime_result: dict, global_lime_result: dict, train_result: dict):
-    """Render LIME Explanation tab content."""
+    """Render LIME Explanation section content."""
     st.subheader("LIME Explanation")
 
     lr         = lime_result
@@ -374,549 +386,239 @@ def _render_lime_tab(lime_result: dict, global_lime_result: dict, train_result: 
     st.dataframe(glr["global_df"].round(4), use_container_width=True)
 
 
-# ── File-upload callbacks (run before next render, so sidebar sees updated state)
-def _on_file_upload():
-    f = st.session_state.get("_data_file")
-    if f is None:
-        st.session_state.ext.update({"raw_df": None, "label_col": None})
-        return
-    try:
-        raw_df = pd.read_csv(f) if f.name.endswith(".csv") else pd.read_excel(f)
-        st.session_state.ext["raw_df"] = raw_df
-        # Auto-detect a sensible default label column
-        hints = ["warranty_claim", "claim", "warranty", "label", "target", "failure", "defect"]
-        default_col = raw_df.columns[0]
-        for hint in hints:
-            matches = [c for c in raw_df.columns if hint.lower() in c.lower()]
-            if matches:
-                default_col = matches[0]
-                break
-        st.session_state.ext["label_col"] = default_col
-    except Exception:
-        st.session_state.ext.update({"raw_df": None, "label_col": None})
+def _render_config_summary(config: dict, diagram_path):
+    stations = config.get("stations", [])
+    all_sensors  = [s for stn in stations for s in stn.get("sensors", [])]
+    sensor_types = [s.get("data_type", "") for s in all_sensors]
+    type_counts  = pd.Series(sensor_types).value_counts()
 
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Plant",         config.get("plant_name", "—"))
+    col2.metric("Plant ID",      config.get("plant_id", "—"))
+    col3.metric("Stations",      len(stations))
+    col4.metric("Total Sensors", len(all_sensors))
 
-def _on_label_select():
-    st.session_state.ext["label_col"] = st.session_state.get("_label_col")
+    tc1, tc2, tc3, tc4 = st.columns(4)
+    tc1.metric("Time-Series Sensors", type_counts.get("time_series", 0))
+    tc2.metric("Scalar Sensors",      type_counts.get("scalar", 0))
+    tc3.metric("Binary Sensors",      type_counts.get("binary", 0))
+    tc4.metric("Categorical Sensors", type_counts.get("categorical", 0))
 
+    if diagram_path:
+        st.divider()
+        st.markdown("#### Facility Topology — as understood by the agent")
+        st.image(str(diagram_path), use_container_width=True)
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.header("Pipeline Settings")
-
-    data_mode = st.radio(
-        "Data Source",
-        ["Simulate", "Upload External Data"],
-        help="Simulate: generate synthetic manufacturing data from plant config. "
-             "Upload: bring your own dataset.",
-    )
+    ordered_stns = sorted(stations, key=lambda s: s.get("station_order", 0))
 
     st.divider()
-
-    if data_mode == "Simulate":
-        n_vehicles = st.slider("Number of vehicles", 100, 1000, 500, step=50)
-
-    n_generations = st.slider("GA generations",      10,  100,  50, step=10)
-    pop_size      = st.slider("GA population size",  50,  500, 200, step=50)
-    c_fa = st.number_input("Cost false-accept (C_FA)", value=0.1, step=0.05)
-    c_fn = st.number_input("Cost false-reject (C_FN)", value=2.0, step=0.5)
+    st.markdown("#### Station Details")
+    station_rows = []
+    for stn in ordered_stns:
+        station_rows.append({
+            "Order":         stn.get("station_order", "—"),
+            "Station UID":   stn["station_uid"],
+            "Name":          stn["station_name"],
+            "Type":          stn["station_type"],
+            "Capacity / hr": stn.get("capacity_per_hour", "—"),
+            "Connected To":  ", ".join(stn.get("connected_to", [])) or "—  (end of line)",
+        })
+    st.dataframe(pd.DataFrame(station_rows), use_container_width=True, hide_index=True)
 
     st.divider()
-
-    if data_mode == "Simulate":
-        run_btn = st.button("Run Pipeline", type="primary", use_container_width=True)
-    else:
-        ext = st.session_state.ext
-        can_run = (
-            ext.get("raw_df") is not None
-            and ext.get("label_col") is not None
-        )
-        run_btn = st.button(
-            "Run Pipeline",
-            type="primary",
-            use_container_width=True,
-            disabled=not can_run,
-            help=None if can_run else "Upload a file and select the label column first.",
-        )
-
-
-# ── Run button logic ──────────────────────────────────────────────────────────
-if run_btn:
-    if data_mode == "Simulate":
-        with st.spinner("Running simulation pipeline — this may take 1-2 minutes..."):
-            pipe = WarrantyRiskPipeline(
-                n_vehicles=n_vehicles,
-                n_generations=n_generations,
-                pop_size=pop_size,
-                c_fa=c_fa,
-                c_fn=c_fn,
-            )
-            pipe.run()
-
-            # Run preprocessing on the labeled feature matrix for the report tab.
-            # Simulated data is clean by design; the report will reflect that.
-            _, sim_report = auto_preprocess(
-                pipe.feature_df_pre_opt.copy(),
-                label_col="warranty_claim",
-            )
-            st.session_state.pipe = pipe
-            st.session_state.sim_preprocess_report = sim_report
-        st.success("Simulation pipeline complete!")
-
-    else:
-        st.info(
-            "The full analysis pipeline for uploaded data is currently under development. "
-            "Please use the **Simulate** mode to explore all pipeline capabilities. "
-            "You can still upload your file to review the data summary in the Data Ingestion tab."
-        )
-
-
-# ── Tabs — Simulate mode ──────────────────────────────────────────────────────
-if data_mode == "Simulate":
-    pipe = st.session_state.pipe
-    tabs = st.tabs([
-        "1 · Plant Setup & Sensors",
-        "2 · Simulation",
-        "3 · Labels",
-        "4 · Data Preprocessing",
-        "5 · Tolerance Optimization",
-        "6 · Prediction",
-        "7 · LIME Explanation",
-    ])
-
-    # ─── TAB 1: Plant Setup & Sensors ─────────────────────────────────────────
-    with tabs[0]:
-        st.subheader("Plant Configuration & Sensor Setup")
-        config   = pipe.config if pipe else load_config()
-        stations = config.get("stations", [])
-
-        all_sensors  = [s for stn in stations for s in stn.get("sensors", [])]
-        sensor_types = [s.get("data_type", "") for s in all_sensors]
-        type_counts  = pd.Series(sensor_types).value_counts()
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Plant",         config.get("plant_name", "—"))
-        col2.metric("Plant ID",      config.get("plant_id", "—"))
-        col3.metric("Stations",      len(stations))
-        col4.metric("Total Sensors", len(all_sensors))
-
-        tc1, tc2, tc3, tc4 = st.columns(4)
-        tc1.metric("Time-Series Sensors", type_counts.get("time_series", 0))
-        tc2.metric("Scalar Sensors",      type_counts.get("scalar", 0))
-        tc3.metric("Binary Sensors",      type_counts.get("binary", 0))
-        tc4.metric("Categorical Sensors", type_counts.get("categorical", 0))
-
-        st.divider()
-        st.markdown("#### Assembly Line Flow")
-        _diagram_path = Path(__file__).parent.parent / "outputs" / "diagrams" / "06_plant_station_config.png"
-        st.image(str(_diagram_path), use_container_width=True)
-
-        ordered_stns = sorted(stations, key=lambda s: s.get("station_order", 0))
-
-        st.divider()
-        st.markdown("#### Station Details")
-        station_rows = []
-        for stn in ordered_stns:
-            station_rows.append({
-                "Order":         stn.get("station_order", "—"),
-                "Station UID":   stn["station_uid"],
-                "Name":          stn["station_name"],
-                "Type":          stn["station_type"],
-                "Capacity / hr": stn.get("capacity_per_hour", "—"),
-                "Connected To":  ", ".join(stn.get("connected_to", [])) or "—  (end of line)",
+    st.markdown("#### Sensor Specifications")
+    sensor_rows = []
+    for stn in ordered_stns:
+        for sensor in stn.get("sensors", []):
+            sensor_rows.append({
+                "Sensor UID":  sensor["sensor_uid"],
+                "Sensor Name": sensor.get("sensor_name", "—"),
+                "Station":     stn["station_uid"],
+                "Data Type":   sensor.get("data_type", "—"),
+                "Category":    sensor.get("sensor_category", "—"),
+                "Unit":        sensor.get("unit", "—"),
+                "Lower Limit": sensor.get("lower_limit", "—"),
+                "Upper Limit": sensor.get("upper_limit", "—"),
+                "Risk Weight": sensor.get("risk_weight", "1.0 (default)"),
             })
-        st.dataframe(pd.DataFrame(station_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(sensor_rows), use_container_width=True, hide_index=True)
 
-        st.divider()
-        st.markdown("#### Sensor Specifications")
-        sensor_rows = []
-        for stn in ordered_stns:
-            for sensor in stn.get("sensors", []):
-                sensor_rows.append({
-                    "Sensor UID":  sensor["sensor_uid"],
-                    "Sensor Name": sensor.get("sensor_name", "—"),
-                    "Station":     stn["station_uid"],
-                    "Data Type":   sensor.get("data_type", "—"),
-                    "Category":    sensor.get("sensor_category", "—"),
-                    "Unit":        sensor.get("unit", "—"),
-                    "Lower Limit": sensor.get("lower_limit", "—"),
-                    "Upper Limit": sensor.get("upper_limit", "—"),
-                    "Sampling Hz": sensor.get("sampling_hz", "—"),
-                })
-        st.dataframe(pd.DataFrame(sensor_rows), use_container_width=True, hide_index=True)
 
-        st.divider()
-        st.markdown("#### Warranty Risk Scoring Weights")
+# ── Phase 1: Setup ──────────────────────────────────────────────────────────────
+st.header("1 · Setup")
+
+with st.expander("Facility configuration", expanded=not st.session_state.phase_setup_confirmed):
+    uploaded_config = st.file_uploader(
+        "Upload a plant configuration JSON (or leave empty to use the default)",
+        type=["json"], key="_config_file",
+    )
+    setup_btn = st.button("Register facility", type="primary")
+
+    if setup_btn:
+        import json as _json
+        config_arg = _json.load(uploaded_config) if uploaded_config else None
+        st.session_state.setup_result = agent.setup(config_arg)
+        st.session_state.phase_setup_confirmed = False
+        st.session_state.phase_data_ready = False
+        st.session_state.phase_learn_done = False
+
+    setup_result = getattr(agent, "setup_result", None)
+    if setup_result is not None:
+        st.info(setup_result.narration)
+
+        if not setup_result.validation.is_valid:
+            st.error("Configuration problems found:")
+            for err in setup_result.validation.errors:
+                st.markdown(f"- {err}")
+        else:
+            if setup_result.validation.warnings:
+                for w in setup_result.validation.warnings:
+                    st.warning(w)
+
+            _render_config_summary(setup_result.config, setup_result.diagram_path)
+
+            if not st.session_state.phase_setup_confirmed:
+                if st.button("✅ Confirm this is my facility", type="primary"):
+                    agent.confirm_setup()
+                    st.session_state.phase_setup_confirmed = True
+                    st.rerun()
+            else:
+                st.success("Facility confirmed.")
+
+if not st.session_state.phase_setup_confirmed:
+    st.stop()
+
+# ── Phase 2: Data ────────────────────────────────────────────────────────────────
+st.header("2 · Data")
+
+with st.expander("Data source", expanded=not st.session_state.phase_data_ready):
+    data_options = ["Upload real data"]
+    if SIMULATOR_AVAILABLE:
+        data_options.append("Simulate")
+    else:
         st.caption(
-            "Weights used in the stochastic sigmoid label generation. "
-            "Higher weight = stronger predictor of in-warranty claims."
+            "Simulation is unavailable — the `plant_simulator` package isn't installed "
+            "(`pip install -e ./plant_simulator`). Upload real data instead."
         )
-        weight_rows = [
-            {"Sensor UID": "SNS_VISUAL_DEFECT_001", "Sensor Name": "Visual Defect Detection",
-             "Risk Weight": 3.0,        "Rationale": "Visible defects — strongest warranty signal"},
-            {"Sensor UID": "SNS_CONTINUITY_001",    "Sensor Name": "Wiring Continuity",
-             "Risk Weight": 2.5,        "Rationale": "Wiring failure → electrical warranty risk"},
-            {"Sensor UID": "SNS_VIBRATION_001",     "Sensor Name": "Vehicle Vibration",
-             "Risk Weight": 2.0,        "Rationale": "High vibration → mechanical wear"},
-            {"Sensor UID": "SNS_TORQUE_001",        "Sensor Name": "Wheel Torque",
-             "Risk Weight": 1.5,        "Rationale": "Torque out-of-spec → assembly defect"},
-            {"Sensor UID": "SNS_WELD_TEMP_001",     "Sensor Name": "Welding Temperature",
-             "Risk Weight": 1.2,        "Rationale": "Weld temp drift → structural quality"},
-            {"Sensor UID": "SNS_PAINT_THICK_001",   "Sensor Name": "Paint Thickness",
-             "Risk Weight": "Excluded", "Rationale": "Cosmetic — low correlation with claims"},
-        ]
-        st.dataframe(pd.DataFrame(weight_rows), use_container_width=True, hide_index=True)
+    data_source = st.radio("Do you have real data?", data_options, horizontal=True)
 
-    # ─── TAB 2: Simulation ────────────────────────────────────────────────────
-    with tabs[1]:
-        st.subheader("Manufacturing Simulation")
-        if pipe is None:
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            vdf = pipe.vehicle_df
-            mdf = pipe.manufacturing_df
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Vehicles simulated", len(vdf))
-            col2.metric("Sensor records",     f"{len(mdf):,}")
-            col3.metric("Stations",           len(pipe.config.get("stations", [])))
-
-            st.divider()
-            st.markdown("#### Vehicle Metadata Summary")
-
-            prod_min   = vdf["production_timestamp"].min()
-            prod_max   = vdf["production_timestamp"].max()
-            shift_dist = vdf["shift_id"].value_counts().sort_index().to_dict()
-            env_count  = int(vdf["env_stress"].sum())
-
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Production Window",
-                      f"{prod_min.strftime('%Y-%m-%d')} → {prod_max.strftime('%Y-%m-%d')}")
-            m2.metric("Env. Stress Events",
-                      f"{env_count}  ({env_count / len(vdf) * 100:.1f}% of fleet)")
-            m3.metric("Production Interval", "1 vehicle every 5 minutes")
-
-            s1, s2, s3 = st.columns(3)
-            s1.metric("Morning Shift (0)",   shift_dist.get(0, 0))
-            s2.metric("Afternoon Shift (1)", shift_dist.get(1, 0))
-            s3.metric("Night Shift (2)",     shift_dist.get(2, 0))
-
-            st.markdown("**Vehicle metadata (first 10 rows)**")
-            st.dataframe(vdf.head(10), use_container_width=True)
-
-            st.divider()
-            st.markdown("#### Simulation Model Details")
-            st.markdown("""
-**AR(1) Autocorrelated Signal** — time-series sensors:
-```
-value[t] = PHI × value[t-1] + (1 − PHI) × (nominal + drift) + noise
-PHI = 0.85  →  85% autocorrelation (smooth, physically realistic signal)
-```
-
-**Plant Aging / Drift Model:**
-- `drift_factor = vehicle_index / N_vehicles`  → rises from 0.0 to ~1.0 over the run
-- Binary failure rate climbs from **3% → 15%** as the plant ages
-- Categorical "ok" rate falls from **90% → 70%**
-
-**Environmental & Shift Effects:**
-- `env_drift = env_stress × 0.20`  → power-outage vehicles get +20% extra drift
-- `shift_noise = 1 + (night_shift) × 0.10`  → night crew produces 10% noisier readings
-
-**Variable-Length Sequences (time-series sensors only):**
-- Duration sampled uniformly: **1–3 seconds** per station pass
-- Padded to uniform length for ML (see Prediction tab)
-""")
-
-            st.divider()
-            st.markdown("#### Sensor Record Sample (first 20 rows)")
-            st.dataframe(mdf.head(20), use_container_width=True)
-
-            st.divider()
-            st.markdown("#### Sensor Value Statistics")
-
-            mdf_num = mdf.copy()
-            mdf_num["value"] = pd.to_numeric(mdf_num["value"], errors="coerce")
-
-            num_df = mdf_num[mdf_num["sensor_type"].isin(["time_series", "scalar"])]
-            if not num_df.empty:
-                st.markdown("**Numeric Sensors (time_series / scalar)**")
-                numeric_stats = (
-                    num_df.groupby("sensor_uid")["value"]
-                    .agg(["mean", "std", "min", "max", "count"])
-                    .round(3)
-                    .rename(columns={"count": "readings"})
-                )
-                st.dataframe(numeric_stats, use_container_width=True)
-
-            bin_df = mdf_num[mdf_num["sensor_type"] == "binary"]
-            if not bin_df.empty:
-                fail_rate = float(bin_df["value"].mean())
-                b1, b2 = st.columns(2)
-                b1.metric("Binary Sensor (Wiring Continuity) — Failure Rate",
-                          f"{fail_rate:.3f}  ({fail_rate * 100:.1f}%)")
-                b2.metric("Total Binary Readings", f"{len(bin_df):,}")
-
-            cat_df = mdf[mdf["sensor_type"] == "categorical"]
-            if not cat_df.empty:
-                st.markdown("**Categorical Sensor (Visual Defect) — Value Distribution**")
-                cat_counts = cat_df["value"].value_counts().reset_index()
-                cat_counts.columns = ["Category", "Count"]
-                cat_counts["Percentage"] = (
-                    cat_counts["Count"] / len(cat_df) * 100
-                ).round(1).astype(str) + "%"
-
-                c_data, c_chart = st.columns([1, 2])
-                with c_data:
-                    st.dataframe(cat_counts, use_container_width=True, hide_index=True)
-                with c_chart:
-                    fig_cat, ax_cat = plt.subplots(figsize=(3.2, 2.0))
-                    colors_cat = {"ok": "#2ECC71", "minor": "#F39C12", "major": "#E74C3C"}
-                    bars_cat   = ax_cat.bar(
-                        cat_counts["Category"],
-                        cat_counts["Count"],
-                        color=[colors_cat.get(str(c).lower(), "#95A5A6")
-                               for c in cat_counts["Category"]],
-                    )
-                    ax_cat.set_title("Visual Defect Distribution", fontsize=9)
-                    ax_cat.set_ylabel("Count")
-                    for bar, cnt in zip(bars_cat, cat_counts["Count"]):
-                        ax_cat.text(bar.get_x() + bar.get_width() / 2,
-                                    bar.get_height() + 20, str(cnt),
-                                    ha="center", va="bottom", fontsize=7)
-                    fig_cat.tight_layout()
-                    st.pyplot(fig_cat)
-                    plt.close(fig_cat)
-
-    # ─── TAB 3: Labels ────────────────────────────────────────────────────────
-    with tabs[2]:
-        st.subheader("Warranty Claim Labels (Stochastic Sigmoid)")
-        if pipe is None:
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            meta = pipe.label_meta
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total claims",      meta["claim_count"])
-            col2.metric("Claim rate",        f"{meta['claim_rate']:.1%}")
-            col3.metric("Sigmoid threshold", f"{meta['sigmoid_threshold']:.2f}")
-            col4.metric("Max p_claim",       f"{meta['p_claim_max']:.3f}")
-
-            st.markdown("**Feature matrix with warranty label (first 10 rows)**")
-            display_df = pipe.feature_df_pre_opt.copy()
-            if "warranty_claim" in display_df.columns:
-                cols = ["warranty_claim"] + [c for c in display_df.columns if c != "warranty_claim"]
-                display_df = display_df[cols]
-            st.dataframe(display_df.head(10).round(3), use_container_width=True)
-
-            fig, ax = plt.subplots(figsize=(4.0, 2.4))
-            vc = pipe.feature_df_pre_opt["warranty_claim"].value_counts()
-            ax.bar(["No Claim (0)", "Claim (1)"], [vc.get(0, 0), vc.get(1, 0)],
-                   color=["#2ECC71", "#E74C3C"])
-            ax.set_ylabel("Count")
-            ax.set_title("Warranty Claim Distribution")
-            fig.tight_layout()
-            col_img, _ = st.columns([1, 1])
-            with col_img:
-                st.pyplot(fig)
-            plt.close(fig)
-
-    # ─── TAB 4: Data Preprocessing ────────────────────────────────────────────
-    with tabs[3]:
-        st.subheader("Data Preprocessing")
-        if pipe is None:
-            st.info("Run the pipeline using the sidebar.")
-        elif st.session_state.sim_preprocess_report is None:
-            st.info("Preprocessing report not available. Re-run the pipeline.")
-        else:
-            st.caption(
-                "Preprocessing is applied to the labeled feature matrix before "
-                "tolerance optimization. For simulated data the report will typically "
-                "show a clean result — this step becomes critical for real uploaded data."
+    if data_source == "Simulate":
+        n_vehicles = st.slider("Number of vehicles", 100, 1000, 500, step=50)
+        if st.button("Simulate data", type="primary"):
+            with st.spinner("Simulating..."):
+                st.session_state.data_result = agent.data("simulate", n_vehicles=n_vehicles)
+            st.session_state.phase_data_ready = (
+                st.session_state.data_result.feature_df is not None
             )
-            _render_preprocess_report(
-                report=st.session_state.sim_preprocess_report,
-                df_before=pipe.feature_df_pre_opt,
-                df_after=pipe.feature_df_pre_opt,
-            )
+            st.session_state.phase_learn_done = False
 
-    # ─── TAB 5: Tolerance Optimization ────────────────────────────────────────
-    with tabs[4]:
-        if pipe is None:
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            _render_ga_tab(pipe.ga_result, pipe.feature_df, pipe.c_fa)
-
-    # ─── TAB 6: Prediction ────────────────────────────────────────────────────
-    with tabs[5]:
-        if pipe is None:
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            _render_prediction_tab(pipe.train_result, pipe.results_df)
-
-    # ─── TAB 7: LIME Explanation ──────────────────────────────────────────────
-    with tabs[6]:
-        if pipe is None:
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            _render_lime_tab(pipe.lime_result, pipe.global_lime_result, pipe.train_result)
-
-
-# ── Tabs — Upload mode ────────────────────────────────────────────────────────
-else:
-    ext  = st.session_state.ext
-    tabs = st.tabs([
-        "1 · Data Ingestion",
-        "2 · Data Preprocessing",
-        "3 · Tolerance Optimization",
-        "4 · Prediction",
-        "5 · LIME Explanation",
-    ])
-
-    # ─── TAB 1: Data Ingestion ────────────────────────────────────────────────
-    with tabs[0]:
-        st.subheader("Data Ingestion")
-        st.caption(
-            "Upload a CSV or Excel file containing your sensor / feature data "
-            "plus a warranty claim label column. All preprocessing happens automatically "
-            "in the next tab after you click Run Pipeline."
-        )
-
-        # on_change callback ensures session state is updated BEFORE the sidebar
-        # re-renders, so the Run Pipeline button reflects the correct disabled state.
-        st.file_uploader(
-            "Upload data file",
-            type=["csv", "xlsx", "xls"],
-            key="_data_file",
-            on_change=_on_file_upload,
-            help="Supported formats: CSV, Excel (.xlsx, .xls)",
-        )
-
-        raw_df = ext.get("raw_df")
-
-        if raw_df is not None:
-            # ── Basic quality snapshot ────────────────────────────────────────
-            q1, q2, q3, q4 = st.columns(4)
-            q1.metric("Rows",                f"{len(raw_df):,}")
-            q2.metric("Columns",             raw_df.shape[1])
-            q3.metric("Total missing cells", f"{raw_df.isnull().sum().sum():,}")
-            q4.metric("Duplicate rows",      f"{int(raw_df.duplicated().sum()):,}")
-
-            st.divider()
-
-            # ── Column type summary ───────────────────────────────────────────
-            st.markdown("#### Column Overview")
-            col_info = []
-            for col in raw_df.columns:
-                n_null = int(raw_df[col].isnull().sum())
-                col_info.append({
-                    "Column":        col,
-                    "Dtype":         str(raw_df[col].dtype),
-                    "Non-null":      int(raw_df[col].notna().sum()),
-                    "Nulls":         n_null,
-                    "Null %":        f"{n_null / len(raw_df) * 100:.1f}%",
-                    "Unique":        int(raw_df[col].nunique()),
-                    "Sample values": str(raw_df[col].dropna().unique()[:3].tolist()),
-                })
-            st.dataframe(pd.DataFrame(col_info), use_container_width=True, hide_index=True)
-
-            st.divider()
-
-            # ── Label column selector ─────────────────────────────────────────
-            st.markdown("#### Select Label Column")
-            st.caption(
-                "Choose the column that contains the warranty claim label "
-                "(must be binary: 0 = no claim, 1 = claim, or similar)."
-            )
-
-            # Compute default index from auto-detected label col
-            current_label = ext.get("label_col")
+    else:
+        data_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx", "xls"])
+        if data_file is not None:
+            raw_df = pd.read_csv(data_file) if data_file.name.endswith(".csv") else pd.read_excel(data_file)
             cols_list = list(raw_df.columns)
-            default_idx = cols_list.index(current_label) if current_label in cols_list else 0
+            label_col = st.selectbox("Label column (warranty claim)", options=cols_list)
+            if st.button("Validate data", type="primary"):
+                st.session_state.data_result = agent.data("upload", df=raw_df, label_col=label_col)
+                st.session_state.phase_data_ready = (
+                    st.session_state.data_result.upload_validation is not None
+                    and st.session_state.data_result.upload_validation.is_valid
+                )
+                st.session_state.phase_learn_done = False
 
-            st.selectbox(
-                "Label column",
-                options=cols_list,
-                index=default_idx,
-                key="_label_col",
-                on_change=_on_label_select,
-            )
+    dr = st.session_state.data_result
+    if dr is not None:
+        st.info(dr.narration)
+        if dr.upload_validation is not None:
+            uv = dr.upload_validation
+            if uv.is_valid:
+                _render_preprocess_report(uv.preprocess_report, uv.raw_df, uv.cleaned_df)
+                st.warning(
+                    "Tolerance optimization and model training currently require simulated "
+                    "sensor time-series (uploaded tabular data only supports validation and "
+                    "preprocessing preview for now)."
+                )
 
-            selected_label = ext.get("label_col") or cols_list[default_idx]
+if not st.session_state.phase_data_ready:
+    st.stop()
 
-            # Show class balance for selected label
-            try:
-                vc = raw_df[selected_label].value_counts().sort_index()
-                st.markdown(f"**Class balance for `{selected_label}`:**")
-                balance_df = vc.reset_index()
-                balance_df.columns = ["Value", "Count"]
-                balance_df["Percentage"] = (
-                    balance_df["Count"] / len(raw_df) * 100
-                ).round(1).astype(str) + "%"
-                cl1, cl2 = st.columns([1, 2])
-                with cl1:
-                    st.dataframe(balance_df, use_container_width=True, hide_index=True)
-                with cl2:
-                    fig_bal, ax_bal = plt.subplots(figsize=(3.2, 2.4))
-                    x_labels = balance_df["Value"].astype(str).tolist()
-                    ax_bal.bar(
-                        x_labels,
-                        balance_df["Count"],
-                        color=["#2ECC71", "#E74C3C"] + ["#95A5A6"] * max(0, len(balance_df) - 2),
-                    )
-                    short_title = (selected_label[:25] + "…") if len(selected_label) > 25 else selected_label
-                    ax_bal.set_title(f"Label: {short_title}", fontsize=9)
-                    ax_bal.set_ylabel("Count", fontsize=8)
-                    ax_bal.tick_params(axis="x", labelsize=8, rotation=45)
-                    ax_bal.tick_params(axis="y", labelsize=8)
-                    fig_bal.tight_layout()
-                    st.pyplot(fig_bal)
-                    plt.close(fig_bal)
-            except Exception:
-                pass
+# ── Phase 3: Learning ────────────────────────────────────────────────────────────
+st.header("3 · Learning")
 
+can_learn = agent.pipe is not None and agent.pipe.feature_df is not None
+
+with st.expander("Tolerance optimization & model training", expanded=not st.session_state.phase_learn_done):
+    if not can_learn:
+        st.info("Learning requires simulated data (see note in the Data phase above).")
+    else:
+        n_generations = st.slider("GA generations",     10,  100,  50, step=10)
+        pop_size      = st.slider("GA population size", 50,  500, 200, step=50)
+        c_fa = st.number_input("Cost false-accept (C_FA)", value=0.1, step=0.05)
+        c_fn = st.number_input("Cost false-reject (C_FN)", value=2.0, step=0.5)
+
+        if st.button("Run learning", type="primary"):
+            with st.spinner("Optimizing tolerances and training models..."):
+                st.session_state.learn_result = agent.learn(
+                    n_generations=n_generations, pop_size=pop_size, c_fa=c_fa, c_fn=c_fn,
+                )
+            st.session_state.phase_learn_done = True
+
+        lr = st.session_state.learn_result
+        if lr is not None:
+            st.info(lr.narration)
+            _render_ga_tab(lr.ga_result, agent.pipe.feature_df, c_fa)
             st.divider()
-            st.markdown("#### Raw Data Preview (first 10 rows)")
-            st.dataframe(raw_df.head(10), use_container_width=True)
+            _render_prediction_tab(lr.train_result, lr.results_df)
 
-            st.info(
-                f"Label column set to **`{selected_label}`**. "
-                "Adjust GA settings in the sidebar then click **Run Pipeline** to proceed."
-            )
-        else:
-            st.info("Upload a CSV or Excel file to get started.")
+            if lr.weight_adjustments:
+                st.divider()
+                st.markdown("#### Self-Improvement — Sensor Weight Adjustments")
+                st.caption(
+                    "The agent compared each sensor's out-of-tolerance signal against real "
+                    "claim outcomes this run, and nudged its risk weight toward what actually "
+                    "predicted claims — so the next run scores risk a little more accurately."
+                )
+                st.dataframe(
+                    pd.DataFrame([
+                        {
+                            "Sensor": a.sensor_uid,
+                            "Old Weight": a.old_weight,
+                            "New Weight": a.new_weight,
+                            "Correlation w/ Claims": a.correlation,
+                        }
+                        for a in lr.weight_adjustments
+                    ]),
+                    use_container_width=True, hide_index=True,
+                )
 
-    # ─── TAB 2: Data Preprocessing ────────────────────────────────────────────
-    with tabs[1]:
-        st.subheader("Data Preprocessing")
-        if not ext.get("preprocess_report"):
-            st.info("Run the pipeline using the sidebar to see the preprocessing report.")
-        else:
-            _render_preprocess_report(
-                report=ext["preprocess_report"],
-                df_before=ext["raw_df"],
-                df_after=ext["preprocessed_df"],
-            )
+if not st.session_state.phase_learn_done:
+    st.stop()
 
-    # ─── TAB 3: Tolerance Optimization ────────────────────────────────────────
-    with tabs[2]:
-        if not ext.get("ga_result"):
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            _render_ga_tab(ext["ga_result"], ext["feature_df"], ext["c_fa"])
+# ── Phase 4: Operate ─────────────────────────────────────────────────────────────
+st.header("4 · Operate")
 
-    # ─── TAB 4: Prediction ────────────────────────────────────────────────────
-    with tabs[3]:
-        if not ext.get("train_result"):
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            _render_prediction_tab(ext["train_result"], ext["results_df"])
+if st.button("Score highest-risk vehicle", type="primary"):
+    with st.spinner("Scoring..."):
+        st.session_state.operate_result = agent.operate()
 
-    # ─── TAB 5: LIME Explanation ──────────────────────────────────────────────
-    with tabs[4]:
-        if not ext.get("lime_result"):
-            st.info("Run the pipeline using the sidebar.")
-        else:
-            _render_lime_tab(
-                ext["lime_result"],
-                ext["global_lime_result"],
-                ext["train_result"],
-            )
+opr = st.session_state.operate_result
+if opr is not None:
+    st.info(opr.narration)
+    _render_lime_tab(opr.lime_result, opr.global_lime_result, agent.pipe.train_result)
+else:
+    st.info("Click above to score a vehicle and see the agent's recommendation.")
+
+# ── Agent activity log ───────────────────────────────────────────────────────────
+st.divider()
+with st.expander("Agent activity log (audit trail)"):
+    st.caption(
+        "Every decision the agent has made this session, in order — persisted to "
+        "outputs/agent_audit_log.jsonl."
+    )
+    if not agent.audit_log.entries:
+        st.info("No actions logged yet.")
+    else:
+        st.dataframe(
+            pd.DataFrame(agent.audit_log.entries),
+            use_container_width=True, hide_index=True,
+        )

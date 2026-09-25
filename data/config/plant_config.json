@@ -20,7 +20,8 @@
           "unit": "Celsius",
           "lower_limit": 450,
           "upper_limit": 520,
-          "sampling_hz": 2
+          "sampling_hz": 2,
+          "risk_weight": 1.2
         }
       ]
     },
@@ -41,7 +42,8 @@
           "data_type": "scalar",
           "unit": "micron",
           "lower_limit": 80,
-          "upper_limit": 120
+          "upper_limit": 120,
+          "risk_weight": "excluded"
         }
       ]
     },
@@ -64,7 +66,8 @@
           "unit": "Nm",
           "lower_limit": 30,
           "upper_limit": 50,
-          "sampling_hz": 5
+          "sampling_hz": 5,
+          "risk_weight": 1.5
         }
       ]
     },
@@ -82,7 +85,8 @@
           "sensor_uid": "SNS_CONTINUITY_001",
           "sensor_name": "Wiring Continuity",
           "sensor_category": "electrical",
-          "data_type": "binary"
+          "data_type": "binary",
+          "risk_weight": 2.5
         }
       ]
     },
@@ -100,7 +104,8 @@
           "sensor_uid": "SNS_VISUAL_DEFECT_001",
           "sensor_name": "Visual Defect Detection",
           "sensor_category": "vision",
-          "data_type": "categorical"
+          "data_type": "categorical",
+          "risk_weight": 3.0
         }
       ]
     },
@@ -120,7 +125,8 @@
           "unit": "mm/s",
           "lower_limit": 0,
           "upper_limit": 4,
-          "sampling_hz": 10
+          "sampling_hz": 10,
+          "risk_weight": 2.0
         }
       ]
     }

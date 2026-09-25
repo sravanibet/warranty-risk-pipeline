@@ -13,8 +13,13 @@ Usage
 from pathlib import Path
 
 from .config import load_config, get_stations
-from .simulator.vehicle import generate_vehicle_metadata
-from .simulator.manufacturing import generate_manufacturing_data
+
+try:
+    from plant_simulator import generate_vehicle_metadata, generate_manufacturing_data
+except ImportError:
+    generate_vehicle_metadata = None
+    generate_manufacturing_data = None
+
 from .labels.features import build_feature_matrix
 from .labels.sigmoid import generate_warranty_labels
 from .optimization.ga_optimizer import run_ga_optimization
@@ -82,14 +87,21 @@ class WarrantyRiskPipeline:
 
     # ------------------------------------------------------------------
     def _stage_simulate(self):
-        self.config       = load_config(self.config_path)
+        if generate_vehicle_metadata is None:
+            raise RuntimeError(
+                "The plant_simulator package is not installed. "
+                "Install it with `pip install -e ./plant_simulator`, or upload real data instead."
+            )
+        if self.config is None:
+            self.config = load_config(self.config_path)
         stations          = get_stations(self.config)
         self.vehicle_df   = generate_vehicle_metadata(n=self.n_vehicles)
         self.manufacturing_df = generate_manufacturing_data(self.vehicle_df, stations)
 
     def _stage_labels(self):
         self.feature_df, self.label_meta = generate_warranty_labels(
-            build_feature_matrix(self.manufacturing_df)
+            build_feature_matrix(self.manufacturing_df),
+            config=self.config,
         )
 
     def _stage_optimize(self):
