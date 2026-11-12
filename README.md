@@ -2,6 +2,8 @@
 
 > **Project status — Prototype complete.**  
 > All five pipeline stages are implemented, validated in a clean notebook, and modularized into a Python package with an interactive Streamlit UI. This document describes what has been built, how the system works, and how to run it.
+>
+> **Extension: Quality Monitoring Agent.** The pipeline is now driven by an agent in four gated phases (Setup, Data, Learning, Operate), with live MQTT scoring, a versioned model registry, multi-seed validation and a test suite. See [Section 7](#7-interactive-ui--streamlit-app) and [Known limitations](#known-limitations). Sections 1-5 describe the original prototype pipeline.
 
 ---
 
@@ -327,14 +329,25 @@ warranty-risk-prototype/
 │       └── lime_global_balanced.png
 │
 ├── warranty_risk_app/                     ← Modular Python package + Streamlit UI
-│   ├── app.py                             ← Streamlit application entry point
+│   ├── app.py                             ← Streamlit app (four-phase agent UI)
+│   ├── stream_quality_agent.py            ← Live MQTT scoring runner
+│   ├── mock_publisher.py                  ← Publishes simulated vehicles to MQTT for testing
 │   ├── requirements.txt
+│   ├── tests/                             ← pytest suite (run from warranty_risk_app/)
 │   └── warranty_risk/                     ← Python package
 │       ├── config.py
-│       ├── pipeline.py                    ← End-to-end orchestrator
-│       ├── simulator/
-│       │   ├── vehicle.py
-│       │   └── manufacturing.py
+│       ├── pipeline.py                    ← End-to-end orchestrator (+ score_new_vehicle)
+│       ├── agent/                         ← Quality Monitoring Agent
+│       │   ├── orchestrator.py            ← Setup / Data / Learning / Operate phases
+│       │   ├── config_validator.py, data_validator.py, diagram.py
+│       │   ├── mqtt_listener.py, alerting.py   ← Live stream scoring and alerts
+│       │   ├── model_registry.py          ← Versioned model + preprocessing saves
+│       │   ├── validation.py              ← Multi-seed mean ± std and baseline
+│       │   ├── feedback.py                ← Risk-weight adjustment (see Known limitations)
+│       │   └── narration.py, audit_log.py
+│       ├── preprocessing/
+│       │   ├── preprocessor.py            ← Preprocessor (fit/transform) and auto_preprocess
+│       │   └── encoding.py                ← Shared categorical code map (train = live)
 │       ├── labels/
 │       │   ├── features.py
 │       │   └── sigmoid.py
@@ -346,6 +359,9 @@ warranty-risk-prototype/
 │       │   └── models.py
 │       └── explanation/
 │           └── lime_explainer.py
+│
+├── plant_simulator_pkg/                   ← Optional simulator package (pip install -e)
+│   └── plant_simulator/                   ←   vehicle.py, manufacturing.py
 │
 ├── requirements.txt                       ← Root-level dependencies
 └── README.md
@@ -360,18 +376,23 @@ The pipeline logic is fully encapsulated in the `warranty_risk` package under `w
 | Module | Key function / class | What it returns |
 |---|---|---|
 | `config` | `load_config()`, `get_stations()` | Plant config dict, stations list |
-| `simulator.vehicle` | `generate_vehicle_metadata(n)` | DataFrame: 500 vehicles with shift/env fields |
-| `simulator.manufacturing` | `generate_manufacturing_data(vehicle_df, stations)` | DataFrame: raw sensor records |
+| `plant_simulator` (separate package) | `generate_vehicle_metadata(n)`, `generate_manufacturing_data(...)` | Simulated vehicles and raw sensor records |
+| `preprocessing.preprocessor` | `Preprocessor(label_col).fit(train).transform(df)` | Cleaned DataFrame; imputation and column drops learned from `fit` data only |
+| `preprocessing.encoding` | `fit_category_map(df)`, `encode_values(df, map)` | Categorical codes shared by training and live scoring |
 | `labels.features` | `build_feature_matrix(manufacturing_df)` | DataFrame: one row per vehicle, one col per sensor |
 | `labels.sigmoid` | `generate_warranty_labels(feature_df)` | `(feature_df_with_label, meta_dict)` |
 | `optimization.ga_optimizer` | `run_ga_optimization(...)` | Dict with optimized bounds and GA stats |
 | `optimization.tolerance_features` | `compute_tolerance_features(...)` | feature_df with 2 new tolerance columns |
-| `prediction.padding` | `build_padded_matrix(manufacturing_df, feature_df)` | Wide feature matrix with time-step columns |
+| `prediction.padding` | `build_padded_matrix(manufacturing_df, feature_df, category_map)` | Wide feature matrix with time-step columns |
+| `prediction.padding` | `pad_single_vehicle(readings, sensor_uids, max_seq_len, category_map)` | One live vehicle in the trained column layout |
 | `prediction.models` | `train_and_select(ml_data)` | Best model, all metrics, train/test splits |
 | `prediction.models` | `compare_baseline_enhanced(train_result)` | Metrics for both variants |
 | `explanation.lime_explainer` | `explain_vehicle(...)` | LIME DataFrame + probability |
 | `explanation.lime_explainer` | `global_lime(...)` | Aggregated feature weights + chart |
 | `pipeline` | `WarrantyRiskPipeline().run()` | All artifacts as instance attributes |
+| `pipeline` | `score_new_vehicle(readings_df)` | Probability + LIME for one new vehicle |
+| `agent.orchestrator` | `QualityMonitoringAgent` | Phase-gated Setup / Data / Learning / Operate |
+| `agent.model_registry` | `save(...)`, `load_latest()` | Versioned model, scaler and preprocessing metadata |
 
 **Using the orchestrator in a script or notebook:**
 
@@ -396,17 +417,18 @@ print(pipe.ga_result["df_results"])  # Optimized tolerance limits
 
 The Streamlit app provides a browser-based interface to run the full pipeline and inspect results at each stage without writing any code.
 
-**Five tabs:**
+The app is driven by `QualityMonitoringAgent` in four gated phases; each phase unlocks only after the previous one is confirmed:
 
-| Tab | Contents |
+| Phase | What happens |
 |---|---|
-| 1 · Simulation | Vehicle count, sensor record count, vehicle metadata table, sensor statistics |
-| 2 · Labels | Claim count, claim rate, sigmoid threshold, feature matrix preview, claim distribution chart |
-| 3 · Tolerance Optimization | Optimized bounds table, grouped bar chart (original vs. optimized), tolerance feature summary |
-| 4 · Prediction | Model leaderboard (all 9 models by F1), Baseline vs. Enhanced comparison table, confusion matrices, ROC curves |
-| 5 · LIME Explanation | Three-panel LIME chart for highest-risk vehicle, feature table, global LIME aggregated chart |
+| 1 · Setup | Register the facility (`plant_config.json` or upload); the config is validated, drawn as a station diagram, and must be confirmed by the user |
+| 2 · Data | Upload real data (checked against the registered sensors and cleaned by `auto_preprocess`) or simulate it with the optional `plant_simulator` package |
+| 3 · Learning | GA tolerance optimization, 9-model training and selection, multi-seed validation, model saved to the registry |
+| 4 · Operate | Score a vehicle, LIME explanation, recommended action; live vehicles can be scored from an MQTT stream |
 
-The sidebar allows configuration of vehicle count, GA generations, GA population size, and cost weights (C_FA, C_FN) before running.
+Every phase is narrated in plain language (optionally via the Gemini API, with a deterministic fallback) and recorded in an audit log.
+
+Run parameters in the app include vehicle count, GA generations, GA population size, and cost weights (C_FA, C_FN) before running.
 
 ---
 
@@ -431,13 +453,22 @@ source .venv/bin/activate        # macOS / Linux
 pip install -r warranty_risk_app/requirements.txt
 ```
 
+This also installs the optional simulator (`-e ../plant_simulator_pkg`). To run the test suite:
+
+```bash
+cd warranty_risk_app
+python -m pytest tests/
+```
+
 ### Step 3 — Launch the Streamlit app
 
 ```bash
 streamlit run warranty_risk_app/app.py
 ```
 
-The browser opens automatically at `http://localhost:8501`. Click **▶ Run Pipeline** in the sidebar. The full run takes approximately 1–2 minutes (dominated by GA optimization and model training).
+The browser opens automatically at `http://localhost:8501`. Work through the phases in order (confirm the setup, provide data, run Learning). Learning takes approximately 1–2 minutes (dominated by GA optimization and model training).
+
+For live scoring, start an MQTT broker, run `warranty_risk_app/stream_quality_agent.py`, and use `warranty_risk_app/mock_publisher.py` to publish simulated vehicles.
 
 ### Running via the Python package directly
 
@@ -465,6 +496,8 @@ print(pipe.results_df)
 | **Tolerance optimization** | Static GA bounds (not adaptive/real-time) | Bounds computed once from training data; suitable for offline process qualification |
 | **Model selection** | F1 score (not accuracy) | Accuracy is misleading at ~12% class prevalence; F1 balances precision and recall |
 | **Baseline vs. Enhanced** | `clone(best_model)` for both | Ensures the comparison isolates the effect of tolerance features, not model differences |
+| **Categorical encoding** | One code map fitted at training, saved with the model | A per-batch `LabelEncoder` gives a live vehicle different codes than training did |
+| **Preprocessing** | `Preprocessor` fit/transform | Imputation values and dropped columns come from training data only |
 | **GA optimizer code** | Preserved verbatim from original `.py` file | Maintains consistency with the validated algorithm from prior work |
 
 ---
@@ -486,8 +519,29 @@ print(pipe.results_df)
 - [x] Architecture diagrams for all five pipeline stages
 - [x] Modular Python package (`warranty_risk_app/warranty_risk/`)
 - [x] Streamlit interactive UI with configurable parameters
+- [x] Quality Monitoring Agent: four gated phases, config and data validation, narration, audit log
+- [x] Optional `plant_simulator` package, separate from the application
+- [x] Live scoring of a single vehicle and MQTT listener with alerting
+- [x] Versioned model registry (model, scaler, category map, padding layout)
+- [x] Multi-seed validation (mean ± std) with a baseline comparison
+- [x] Shared categorical encoding and fit/transform `Preprocessor`
+- [x] pytest suite
+
+### Known limitations
+
+These affect how far the reported metrics can be trusted and should be fixed before quoting results:
+
+- **Evaluation leakage.** GA tolerance bounds are fit using claim labels on a split that differs from the model's train/test split, and the resulting tolerance features are then used for training. The decision threshold and the best model are also selected on the test set. Reported F1/AUC are optimistic.
+- **Synthetic labels.** Claims are generated from the same sensors the model sees, so performance on simulated data measures how well the label function is recovered, not real warranty risk. The label generator is not seeded.
+- **Self-reinforcing feedback.** `agent/feedback.py` adjusts sensor risk weights from correlation with claim labels; with simulated labels, those weights also generate the labels.
+- **Partial vehicles.** A vehicle still moving down the line is scored with unreached stations zero-filled, so its score is not reliable.
+- **Upload path.** Uploaded data is validated and cleaned but is not yet carried through to Learning.
 
 ### Possible next steps
+
+- [ ] **Leakage-free evaluation**: split by vehicle into train / validation / test first; fit the GA, preprocessor and encoders on train only; choose model and threshold on validation; report once on test
+- [ ] **Feedback on real labels only**: adjust risk weights only from real claims, measured on held-out vehicles
+- [ ] **Partial-vehicle scoring**: train on truncated station prefixes or use a sequence model
 
 - [ ] **Real Plant Data Integration** — Replace the simulator with actual plant sensor feeds; the package API accepts any DataFrame matching the expected schema
 - [ ] **End-to-End Pipeline Adaptation for Live Data** — Adapt preprocessing, feature engineering, tolerance optimization, and model retraining to handle the characteristics of real sensor data (noise, missing readings, calibration drift)
@@ -502,3 +556,5 @@ print(pipe.results_df)
 
 **Developed by:** Noor-E Jannat, PhD Candidate  
 Industrial & Systems Engineering (ISE) Department, Wayne State University
+
+**Extended by:** Sravani B: Quality Monitoring Agent, live scoring, model registry, validation, shared encoding and fit/transform preprocessing
