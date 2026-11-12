@@ -17,25 +17,17 @@ def _get_explainer(X_train: np.ndarray, feature_names: list) -> LimeTabularExpla
     )
 
 
-def explain_vehicle(
-    vehicle_idx: int,
-    X_test: np.ndarray,
+def explain_instance_row(
+    instance: np.ndarray,
     X_train: np.ndarray,
     feature_names: list,
     predict_fn,
     num_features: int = 10,
 ) -> dict:
     """
-    Generate a LIME explanation for a single test vehicle.
-
-    Parameters
-    ----------
-    vehicle_idx  : row index into X_test
-    X_test       : scaled/raw test feature array
-    X_train      : scaled/raw train feature array (for explainer background)
-    feature_names: list of feature column names
-    predict_fn   : model.predict_proba (callable)
-    num_features : top features to show
+    Generate a LIME explanation for an arbitrary single feature vector —
+    used both for a row already in X_test (via explain_vehicle) and for a
+    brand-new vehicle scored live (not part of any train/test split).
 
     Returns
     -------
@@ -46,8 +38,7 @@ def explain_vehicle(
     """
     explainer = _get_explainer(X_train, feature_names)
 
-    instance = X_test[vehicle_idx]
-    exp  = explainer.explain_instance(instance, predict_fn, num_features=num_features)
+    exp   = explainer.explain_instance(instance, predict_fn, num_features=num_features)
     proba = predict_fn(instance.reshape(1, -1))[0, 1]
 
     lime_list = exp.as_list()
@@ -56,6 +47,29 @@ def explain_vehicle(
     lime_df = lime_df.sort_values("Weight", key=abs, ascending=False)
 
     return {"lime_df": lime_df, "proba": float(proba), "exp": exp}
+
+
+def explain_vehicle(
+    vehicle_idx: int,
+    X_test: np.ndarray,
+    X_train: np.ndarray,
+    feature_names: list,
+    predict_fn,
+    num_features: int = 10,
+) -> dict:
+    """
+    Generate a LIME explanation for a single test-set vehicle.
+
+    Parameters
+    ----------
+    vehicle_idx  : row index into X_test
+    X_test       : scaled/raw test feature array
+    X_train      : scaled/raw train feature array (for explainer background)
+    feature_names: list of feature column names
+    predict_fn   : model.predict_proba (callable)
+    num_features : top features to show
+    """
+    return explain_instance_row(X_test[vehicle_idx], X_train, feature_names, predict_fn, num_features)
 
 
 def plot_lime_instance(lime_df: pd.DataFrame, proba: float, vehicle_id: str = "") -> plt.Figure:

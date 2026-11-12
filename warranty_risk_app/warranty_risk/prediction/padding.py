@@ -59,6 +59,63 @@ def pad_and_mask(manufacturing_df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def compute_padding_meta(manufacturing_df: pd.DataFrame) -> tuple:
+    """
+    Returns (sensor_uids, max_seq_len) exactly as pad_and_mask would derive
+    them from this DataFrame. Call this once at training time and reuse the
+    result so a single new vehicle scored later gets the identical column
+    layout the model was trained on.
+    """
+    sensor_uids = sorted(manufacturing_df["sensor_uid"].unique())
+    seq_lengths = manufacturing_df.groupby(["serial_number", "sensor_uid"]).size()
+    max_seq_len = int(seq_lengths.max())
+    return sensor_uids, max_seq_len
+
+
+def pad_single_vehicle(readings_df: pd.DataFrame, sensor_uids: list, max_seq_len: int) -> pd.DataFrame:
+    """
+    Pad one new vehicle's raw sensor readings using a FIXED (sensor_uids,
+    max_seq_len) taken from training time (see compute_padding_meta), so the
+    resulting single-row DataFrame has exactly the columns the model expects
+    — unlike pad_and_mask, which derives both from whatever batch it's given.
+
+    readings_df must contain rows for exactly one serial_number.
+    """
+    df = readings_df.copy()
+    vehicle_ids = df["serial_number"].unique()
+    if len(vehicle_ids) != 1:
+        raise ValueError(f"Expected readings for exactly one vehicle, got {len(vehicle_ids)}.")
+    vid = vehicle_ids[0]
+
+    cat_mask = df["sensor_type"] == "categorical"
+    if cat_mask.any():
+        le = LabelEncoder()
+        df.loc[cat_mask, "value"] = le.fit_transform(df.loc[cat_mask, "value"])
+
+    bin_mask = df["sensor_type"] == "binary"
+    df.loc[bin_mask, "value"] = df.loc[bin_mask, "value"].astype(int)
+
+    df["value"] = pd.to_numeric(df["value"], errors="coerce").fillna(0)
+    df = df.sort_values(["sensor_uid", "timestamp"])
+
+    cols = []
+    for s in sensor_uids:
+        for t in range(max_seq_len):
+            cols += [f"{s}_t{t}", f"{s}_mask_t{t}"]
+
+    row = np.zeros(len(cols))
+    for s in sensor_uids:
+        sdf = df[df["sensor_uid"] == s]["value"].values
+        for t, v in enumerate(sdf[:max_seq_len]):
+            base = (sensor_uids.index(s) * max_seq_len + t) * 2
+            row[base]     = v
+            row[base + 1] = 1
+
+    result = pd.DataFrame([row], columns=cols, index=[vid])
+    result.index.name = "serial_number"
+    return result
+
+
 def build_padded_matrix(
     manufacturing_df: pd.DataFrame,
     feature_df: pd.DataFrame,

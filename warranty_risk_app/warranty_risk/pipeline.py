@@ -24,9 +24,9 @@ from .labels.features import build_feature_matrix
 from .labels.sigmoid import generate_warranty_labels
 from .optimization.ga_optimizer import run_ga_optimization
 from .optimization.tolerance_features import compute_tolerance_features
-from .prediction.padding import build_padded_matrix
+from .prediction.padding import build_padded_matrix, compute_padding_meta, pad_single_vehicle
 from .prediction.models import train_and_select
-from .explanation.lime_explainer import explain_vehicle, global_lime
+from .explanation.lime_explainer import explain_vehicle, explain_instance_row, global_lime
 
 
 class WarrantyRiskPipeline:
@@ -70,6 +70,8 @@ class WarrantyRiskPipeline:
         self.results_df          = None   # model leaderboard
         self.lime_result         = None
         self.global_lime_result  = None
+        self.trained_sensor_uids = None   # fixed column layout for live-scoring new vehicles
+        self.trained_max_seq_len = None
 
     # ------------------------------------------------------------------
     def run(self, explain_vehicle_idx: int = None) -> "WarrantyRiskPipeline":
@@ -138,6 +140,7 @@ class WarrantyRiskPipeline:
             )
 
     def _stage_predict(self):
+        self.trained_sensor_uids, self.trained_max_seq_len = compute_padding_meta(self.manufacturing_df)
         self.ml_data      = build_padded_matrix(self.manufacturing_df, self.feature_df)
         self.train_result = train_and_select(self.ml_data)
         self.results_df   = self.train_result["results_df"]
@@ -172,3 +175,61 @@ class WarrantyRiskPipeline:
             feature_names=feat_names,
             predict_fn=tr["best_model"].predict_proba,
         )
+
+    # ------------------------------------------------------------------
+    def score_new_vehicle(self, readings_df) -> dict:
+        """
+        Score one new vehicle's raw sensor readings against the already-
+        trained model — the "Detection" stage of a live stream, as opposed
+        to _stage_explain which only explains a row already in the test split.
+
+        readings_df: rows shaped like manufacturing_df, for exactly one
+        serial_number (serial_number, station_uid, sensor_uid, sensor_type,
+        timestamp, value).
+
+        Returns a dict: {vehicle_id, proba, lime_df, exp}
+        """
+        if self.train_result is None:
+            raise RuntimeError("No trained model yet — run Learning before scoring a live vehicle.")
+
+        tr = self.train_result
+        vehicle_id = str(readings_df["serial_number"].iloc[0])
+
+        feature_row = build_feature_matrix(readings_df)
+        if self.ga_result and self.ga_result.get("success"):
+            feature_row = compute_tolerance_features(
+                feature_row,
+                self.ga_result["lowers_opt"],
+                self.ga_result["uppers_opt"],
+                self.ga_result["sensors_opt"],
+                self.sensor_rename_inv,
+            )
+
+        padded_row = pad_single_vehicle(
+            readings_df, self.trained_sensor_uids, self.trained_max_seq_len
+        )
+        label_cols = [c for c in ["within_tolerance_all", "out_of_tolerance_count"]
+                      if c in feature_row.columns]
+        combined = padded_row.join(feature_row[label_cols], how="left")
+        combined[label_cols] = combined[label_cols].fillna(0)
+
+        feat_cols = list(tr["feat_cols"])
+        combined = combined.reindex(columns=feat_cols, fill_value=0)
+
+        from .prediction.models import SCALE_NEEDED
+        needs_scale = tr["best_name"] in SCALE_NEEDED
+        if needs_scale:
+            instance = tr["scaler"].transform(combined.values)[0]
+            X_tr = tr["X_train_scaled"]
+        else:
+            instance = combined.values[0]
+            X_tr = tr["X_train"].values
+
+        result = explain_instance_row(
+            instance=instance,
+            X_train=X_tr,
+            feature_names=feat_cols,
+            predict_fn=tr["best_model"].predict_proba,
+        )
+        result["vehicle_id"] = vehicle_id
+        return result

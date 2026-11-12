@@ -340,7 +340,24 @@ class QualityMonitoringAgent:
             raise RuntimeError("No trained model yet — complete the Learning phase first.")
 
         self.pipe._stage_explain(vehicle_idx)
-        lr = self.pipe.lime_result
+        return self._build_operate_result(
+            self.pipe.lime_result, action="score_vehicle",
+            global_lime_result=self.pipe.global_lime_result,
+        )
+
+    # ------------------------------------------------------------------
+    # Live scoring: one new vehicle's readings, e.g. from an MQTT window,
+    # scored against the already-trained model. This is the "Detection"
+    # stage of the IntelliMake Listener -> Detection -> Alerting pipeline.
+    # ------------------------------------------------------------------
+    def score_vehicle_from_readings(self, readings_df: pd.DataFrame) -> OperateResult:
+        if self.pipe is None or self.pipe.train_result is None:
+            raise RuntimeError("No trained model yet — complete the Learning phase first.")
+
+        lr = self.pipe.score_new_vehicle(readings_df)
+        return self._build_operate_result(lr, action="score_live_vehicle")
+
+    def _build_operate_result(self, lr: dict, action: str, global_lime_result: dict = None) -> OperateResult:
         proba = lr["proba"]
 
         if proba >= 0.7:
@@ -369,7 +386,7 @@ class QualityMonitoringAgent:
         )
 
         self.audit_log.record(
-            phase="operate", action="score_vehicle",
+            phase="operate", action=action,
             detail=narration, vehicle_id=lr["vehicle_id"], probability=proba,
             recommendation=recommendation,
         )
@@ -379,6 +396,6 @@ class QualityMonitoringAgent:
             vehicle_id=lr["vehicle_id"],
             probability=proba,
             recommendation=recommendation,
-            lime_result=self.pipe.lime_result,
-            global_lime_result=self.pipe.global_lime_result,
+            lime_result=lr,
+            global_lime_result=global_lime_result,
         )
