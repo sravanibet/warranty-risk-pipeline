@@ -25,6 +25,7 @@ def generate_warranty_labels(
     config: dict = None,
     k: float = 10.0,
     max_claim_rate: float = 0.12,
+    random_state: int = None,
 ) -> pd.DataFrame:
     """
     Add a 'warranty_claim' column using a stochastic sigmoid approach.
@@ -59,7 +60,7 @@ def generate_warranty_labels(
             break
 
     p_claim        = 1 / (1 + np.exp(-k * (risk_norm - chosen_t)))
-    warranty_claim = np.random.binomial(1, p_claim)
+    warranty_claim = np.random.default_rng(random_state).binomial(1, p_claim)
     df["warranty_claim"] = warranty_claim
 
     meta = {

@@ -214,8 +214,14 @@ def _render_prediction_tab(train_result: dict, results_df: pd.DataFrame):
     st.subheader("Model Training & Selection (Tolerance-Enhanced Features)")
     tr = train_result
     st.markdown(
-        f"**Best model:** `{tr['best_name']}` (selected by F1) · "
-        f"threshold: `{tr['best_threshold']:.3f}`"
+        f"**Best model:** `{tr['best_name']}` (selected by validation F1) · "
+        f"threshold: `{tr['best_threshold']:.3f}` (chosen on validation)"
+    )
+    st.caption(
+        f"Vehicles split before any fitting: {len(tr['X_train'])} train / "
+        f"{len(tr['X_val'])} validation / {len(tr['X_test'])} test. Tolerance bounds were fit "
+        "on train vehicles only. F1, Precision, Recall and AUC below are measured on the "
+        "test vehicles, which played no part in fitting, model choice or the threshold."
     )
     st.dataframe(
         results_df.style.highlight_max(subset=["F1"], color="#A9DFBF"),

@@ -59,9 +59,15 @@ def run_ga_optimization(
     c_fa: float = 0.1,
     c_fn: float = 2.0,
     verbose: bool = False,
+    internal_holdout: float = 0.2,
 ) -> dict:
     """
     Run the genetic algorithm on feature_df and return optimized bounds.
+
+    The GA uses claim labels, so feature_df must contain TRAIN vehicles only.
+    internal_holdout is the fraction of the rows passed in that is discarded
+    before optimising (legacy behaviour); pass 0 when the caller has already
+    split train / validation / test and wants the GA to use every row given.
 
     Returns a dict with keys:
         lowers_opt, uppers_opt, df_results, stats,
@@ -80,8 +86,11 @@ def run_ga_optimization(
 
     X_opt = opt_df[sensors_opt]
     y_opt = opt_df["Claim Type"]
-    X_tr, _, y_tr, _ = train_test_split(X_opt, y_opt, stratify=y_opt,
-                                         test_size=0.2, random_state=42)
+    if internal_holdout and internal_holdout > 0:
+        X_tr, _, y_tr, _ = train_test_split(X_opt, y_opt, stratify=y_opt,
+                                             test_size=internal_holdout, random_state=42)
+    else:
+        X_tr, y_tr = X_opt, y_opt
     train_data = X_tr.copy()
     train_data["Claim Type"] = y_tr
 

@@ -157,7 +157,7 @@ Because time-series sensors produce a variable number of readings per vehicle, a
 | SVM (RBF) | `class_weight="balanced"`, scaled |
 
 **Class imbalance handling:**  
-`class_weight="balanced"` prevents models from predicting all-zeros on the ~12% minority class. The decision threshold is also moved from the default 0.5 to an optimal value computed from the precision-recall curve (maximizing F1), typically landing near 0.12–0.15.
+`class_weight="balanced"` prevents models from predicting all-zeros on the ~12% minority class. The decision threshold is also moved from the default 0.5 to an optimal value computed from the precision-recall curve on the **validation** vehicles (maximizing F1), typically landing near 0.12–0.15. Vehicles are split 60 / 20 / 20 into train / validation / test before any fitting; the GA tolerance bounds use train vehicles only, the best model is chosen on validation, and the reported metrics come from the test vehicles.
 
 **Baseline vs. Enhanced comparison:**  
 Both variants use `clone(best_model)` — an identical, freshly initialized copy of whichever model won the leaderboard — so any metric difference is attributable purely to the addition of the two tolerance features.
@@ -526,20 +526,22 @@ print(pipe.results_df)
 - [x] Multi-seed validation (mean ± std) with a baseline comparison
 - [x] Shared categorical encoding and fit/transform `Preprocessor`
 - [x] pytest suite
+- [x] Leakage-free evaluation: vehicles split into train / validation / test before any fitting; the GA is fit on train only; model and threshold are chosen on validation; metrics are reported on the untouched test vehicles; `validate()` repeats the whole procedure per seed. Regression tests in `tests/test_leakage_free.py`.
 
 ### Known limitations
 
 These affect how far the reported metrics can be trusted and should be fixed before quoting results:
 
-- **Evaluation leakage.** GA tolerance bounds are fit using claim labels on a split that differs from the model's train/test split, and the resulting tolerance features are then used for training. The decision threshold and the best model are also selected on the test set. Reported F1/AUC are optimistic.
-- **Synthetic labels.** Claims are generated from the same sensors the model sees, so performance on simulated data measures how well the label function is recovered, not real warranty risk. The label generator is not seeded.
-- **Self-reinforcing feedback.** `agent/feedback.py` adjusts sensor risk weights from correlation with claim labels; with simulated labels, those weights also generate the labels.
+- **Small test set.** Vehicles are split 60 / 20 / 20 (train / validation / test) before any fitting, so with ~500 vehicles and a ~10% claim rate the test set holds only ~10 claims. Metrics are leakage-free but noisy; use the multi-seed `validate()` mean ± std, not a single run.
+- **Threshold is not cost-based.** The decision threshold maximises validation F1 and ignores the false-alarm / missed-defect costs (`c_fa`, `c_fn`) that the GA uses.
+- **Synthetic labels.** Claims are generated from the same sensors the model sees, so performance on simulated data measures how well the label function is recovered, not real warranty risk. (The generator is now seeded, so runs are reproducible.)
+- **Self-reinforcing feedback.** `agent/feedback.py` adjusts sensor risk weights from correlation with claim labels on all vehicles; with simulated labels, those weights also generate the labels. It does not yet use held-out vehicles or distinguish real from simulated labels.
 - **Partial vehicles.** A vehicle still moving down the line is scored with unreached stations zero-filled, so its score is not reliable.
 - **Upload path.** Uploaded data is validated and cleaned but is not yet carried through to Learning.
 
 ### Possible next steps
 
-- [ ] **Leakage-free evaluation**: split by vehicle into train / validation / test first; fit the GA, preprocessor and encoders on train only; choose model and threshold on validation; report once on test
+- [ ] **Cost-based threshold**: choose the decision threshold from `c_fa` / `c_fn` on validation instead of F1
 - [ ] **Feedback on real labels only**: adjust risk weights only from real claims, measured on held-out vehicles
 - [ ] **Partial-vehicle scoring**: train on truncated station prefixes or use a sequence model
 

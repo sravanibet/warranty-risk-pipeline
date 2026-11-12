@@ -33,67 +33,116 @@ _CANDIDATES = {
 
 
 def _optimal_threshold(proba: np.ndarray, y_true: np.ndarray) -> float:
+    """F1-maximising threshold. Call on VALIDATION data, never on the test set."""
+    if len(np.unique(y_true)) < 2:
+        return 0.5
     pr, rc, th = precision_recall_curve(y_true, proba)
     f1s = 2 * pr * rc / (pr + rc + 1e-9)
     return float(th[np.argmax(f1s[:-1])]) if len(th) > 0 else 0.5
 
 
+def _safe_auc(y_true, proba) -> float:
+    return float(roc_auc_score(y_true, proba)) if len(np.unique(y_true)) > 1 else float("nan")
+
+
+def split_vehicles(y: pd.Series, val_size: float = 0.2, test_size: float = 0.2,
+                   random_state: int = 42) -> dict:
+    """
+    Split vehicles (the index of y) into disjoint train / validation / test sets,
+    stratified on the label. Do this BEFORE anything that looks at labels
+    (tolerance optimisation, feature selection, imputation) so those can be fit
+    on `train` only.
+
+    Returns {"train": Index, "val": Index, "test": Index}.
+    """
+    idx = y.index
+    pos = np.arange(len(y))
+    labels = y.to_numpy()
+    tv_pos, test_pos = train_test_split(
+        pos, test_size=test_size, stratify=labels, random_state=random_state
+    )
+    rel_val = val_size / (1.0 - test_size)
+    train_pos, val_pos = train_test_split(
+        tv_pos, test_size=rel_val, stratify=labels[tv_pos], random_state=random_state
+    )
+    train_idx, val_idx, test_idx = idx[train_pos], idx[val_pos], idx[test_pos]
+    return {"train": train_idx, "val": val_idx, "test": test_idx}
+
+
 def train_and_select(
     ml_data: pd.DataFrame,
-    test_size: float = 0.25,
+    test_size: float = 0.2,
     random_state: int = 42,
+    split: dict = None,
+    val_size: float = 0.2,
 ) -> dict:
     """
-    Train all candidate classifiers on (ml_data minus labels), evaluate on
-    hold-out split, and return the best model selected by F1 score.
+    Train all candidate classifiers on the train vehicles, choose the best model
+    AND its decision threshold on the validation vehicles, and report metrics
+    once on the untouched test vehicles.
 
-    Returns a dict with keys:
-        best_model, best_name, best_threshold,
-        X_train, X_test, y_train, y_test,
-        X_train_scaled, X_test_scaled, scaler,
-        results_df          (all models sorted by F1)
+    split: optional {"train","val","test"} vehicle indices from split_vehicles
+    (pass the one used to fit the tolerance optimiser so no test vehicle ever
+    influenced a fitted component). If omitted, a new split is made here.
+
+    results_df columns: Model, Val_F1 (selection criterion), then F1 / Precision /
+    Recall / AUC / Threshold, which are TEST-set metrics at the validation-chosen
+    threshold. Sorted by Val_F1.
+
+    Also returns best_model, best_name, best_threshold, best_proba, best_preds
+    (test set), X/y for train, val and test (plus scaled arrays), scaler,
+    feat_cols, tol_cols and the split used.
     """
     tol_cols  = ["within_tolerance_all", "out_of_tolerance_count"]
-    # Tolerance features are included in training — this is the tolerance-enhanced model
     feat_cols = [c for c in ml_data.columns if c != "warranty_claim"]
 
-    X = ml_data[feat_cols]
-    y = ml_data["warranty_claim"].astype(int)
+    y_all = ml_data["warranty_claim"].astype(int)
+    if split is None:
+        split = split_vehicles(y_all, val_size=val_size, test_size=test_size,
+                               random_state=random_state)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, stratify=y, random_state=random_state
-    )
+    X_train, y_train = ml_data.loc[split["train"], feat_cols], y_all.loc[split["train"]]
+    X_val,   y_val   = ml_data.loc[split["val"],   feat_cols], y_all.loc[split["val"]]
+    X_test,  y_test  = ml_data.loc[split["test"],  feat_cols], y_all.loc[split["test"]]
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
+    X_val_scaled   = scaler.transform(X_val)
     X_test_scaled  = scaler.transform(X_test)
 
     rows = []
-    for name, clf in _CANDIDATES.items():
-        Xtr = X_train_scaled if name in SCALE_NEEDED else X_train.values
-        Xte = X_test_scaled  if name in SCALE_NEEDED else X_test.values
+    for name, base_clf in _CANDIDATES.items():
+        clf = clone(base_clf)
+        scaled = name in SCALE_NEEDED
+        Xtr = X_train_scaled if scaled else X_train.values
+        Xva = X_val_scaled   if scaled else X_val.values
+        Xte = X_test_scaled  if scaled else X_test.values
         clf.fit(Xtr, y_train)
-        proba = clf.predict_proba(Xte)[:, 1]
-        thr   = _optimal_threshold(proba, y_test)
+
+        proba_val = clf.predict_proba(Xva)[:, 1]
+        thr = _optimal_threshold(proba_val, y_val)                  # threshold: validation
+        val_f1 = f1_score(y_val, (proba_val >= thr).astype(int), zero_division=0)
+
+        proba = clf.predict_proba(Xte)[:, 1]                        # reported: test
         preds = (proba >= thr).astype(int)
         rows.append({
             "Model":     name,
+            "Val_F1":    round(val_f1, 3),
             "F1":        round(f1_score(y_test, preds, zero_division=0), 3),
             "Precision": round(precision_score(y_test, preds, zero_division=0), 3),
             "Recall":    round(recall_score(y_test, preds, zero_division=0), 3),
-            "AUC":       round(roc_auc_score(y_test, proba), 3),
+            "AUC":       round(_safe_auc(y_test, proba), 3),
             "Threshold": round(thr, 3),
             "_clf":      clf,
         })
 
-    results_df = pd.DataFrame(rows).sort_values("F1", ascending=False).reset_index(drop=True)
+    results_df = pd.DataFrame(rows).sort_values("Val_F1", ascending=False).reset_index(drop=True)
 
     best_row       = results_df.iloc[0]
     best_name      = best_row["Model"]
     best_model     = best_row["_clf"]
     best_threshold = best_row["Threshold"]
 
-    # Pre-compute best model predictions for the app to use directly
     best_Xte   = X_test_scaled if best_name in SCALE_NEEDED else X_test.values
     best_proba = best_model.predict_proba(best_Xte)[:, 1]
     best_preds = (best_proba >= best_threshold).astype(int)
@@ -105,21 +154,25 @@ def train_and_select(
         "best_proba":      best_proba,
         "best_preds":      best_preds,
         "X_train":         X_train,
+        "X_val":           X_val,
         "X_test":          X_test,
         "y_train":         y_train,
+        "y_val":           y_val,
         "y_test":          y_test,
         "X_train_scaled":  X_train_scaled,
+        "X_val_scaled":    X_val_scaled,
         "X_test_scaled":   X_test_scaled,
         "scaler":          scaler,
         "results_df":      results_df.drop(columns=["_clf"]),
         "feat_cols":       feat_cols,
         "tol_cols":        tol_cols,
+        "split":           split,
     }
 
 
 def compare_baseline_enhanced(train_result: dict) -> dict:
     """
-    Retrain clone(best_model) twice:
+    Retrain clone(best_model) twice (threshold chosen on validation, metrics on test):
       - Baseline: time-series features only (no tolerance columns)
       - Enhanced: time-series + tolerance features
 
@@ -128,10 +181,13 @@ def compare_baseline_enhanced(train_result: dict) -> dict:
     best_model    = train_result["best_model"]
     best_name     = train_result["best_name"]
     X_train       = train_result["X_train"]
+    X_val         = train_result["X_val"]
     X_test        = train_result["X_test"]
     y_train       = train_result["y_train"]
+    y_val         = train_result["y_val"]
     y_test        = train_result["y_test"]
     X_tr_sc       = train_result["X_train_scaled"]
+    X_va_sc       = train_result["X_val_scaled"]
     X_te_sc       = train_result["X_test_scaled"]
     tol_cols      = train_result["tol_cols"]
     feat_cols     = train_result["feat_cols"]
@@ -143,16 +199,17 @@ def compare_baseline_enhanced(train_result: dict) -> dict:
 
     def _get_arrays(idx_list):
         if needs_scale:
-            return X_tr_sc[:, idx_list], X_te_sc[:, idx_list]
-        return X_train.values[:, idx_list], X_test.values[:, idx_list]
+            return X_tr_sc[:, idx_list], X_va_sc[:, idx_list], X_te_sc[:, idx_list]
+        return (X_train.values[:, idx_list], X_val.values[:, idx_list],
+                X_test.values[:, idx_list])
 
     results = {}
     for label, idx in [("Baseline", ts_idx), ("Enhanced", list(range(len(feat_cols))))]:
-        Xtr, Xte = _get_arrays(idx)
+        Xtr, Xva, Xte = _get_arrays(idx)
         m = clone(best_model)
         m.fit(Xtr, y_train)
-        proba = m.predict_proba(Xte)[:, 1]
-        thr   = _optimal_threshold(proba, y_test)
+        thr   = _optimal_threshold(m.predict_proba(Xva)[:, 1], y_val)   # validation
+        proba = m.predict_proba(Xte)[:, 1]                                # reported on test
         preds = (proba >= thr).astype(int)
         results[label] = {
             "model":    m,
@@ -162,7 +219,7 @@ def compare_baseline_enhanced(train_result: dict) -> dict:
             "f1":       round(f1_score(y_test, preds, zero_division=0), 3),
             "precision": round(precision_score(y_test, preds, zero_division=0), 3),
             "recall":   round(recall_score(y_test, preds, zero_division=0), 3),
-            "auc":      round(roc_auc_score(y_test, proba), 3),
+            "auc":      round(_safe_auc(y_test, proba), 3),
         }
 
     return {"comparison": results, "y_test": y_test, "best_name": best_name}

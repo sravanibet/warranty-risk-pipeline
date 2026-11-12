@@ -26,7 +26,7 @@ from .labels.sigmoid import generate_warranty_labels
 from .optimization.ga_optimizer import run_ga_optimization
 from .optimization.tolerance_features import compute_tolerance_features
 from .prediction.padding import build_padded_matrix, compute_padding_meta, pad_single_vehicle
-from .prediction.models import train_and_select
+from .prediction.models import train_and_select, split_vehicles
 from .explanation.lime_explainer import explain_vehicle, explain_instance_row, global_lime
 
 
@@ -46,6 +46,7 @@ class WarrantyRiskPipeline:
         c_fa: float = 0.1,
         c_fn: float = 2.0,
         verbose_ga: bool = False,
+        seed: int = 42,
     ):
         self.config_path   = config_path
         self.n_vehicles    = n_vehicles
@@ -54,6 +55,8 @@ class WarrantyRiskPipeline:
         self.c_fa          = c_fa
         self.c_fn          = c_fn
         self.verbose_ga    = verbose_ga
+        self.seed          = seed
+        self.split         = None   # {"train","val","test"} vehicle ids, made before the GA runs
 
         # Artifacts — populated by run()
         self.config              = None
@@ -106,13 +109,45 @@ class WarrantyRiskPipeline:
         self.feature_df, self.label_meta = generate_warranty_labels(
             build_feature_matrix(self.manufacturing_df),
             config=self.config,
+            random_state=self.seed,
         )
 
-    def _stage_optimize(self):
-        # Snapshot feature_df before tolerance columns are appended (for Tab 2 display)
-        self.feature_df_pre_opt = self.feature_df.copy()
+    def fit_tolerance(self, feature_df, train_idx):
+        """
+        Fit the GA tolerance bounds on the TRAIN vehicles only, then compute
+        the tolerance features for every vehicle from those bounds. Returns
+        (ga_result, feature_df_with_tolerance_columns) without touching state,
+        so validation can repeat it for other splits.
+        """
+        ga = run_ga_optimization(
+            feature_df=feature_df.loc[train_idx],
+            sensor_cols=self.sensor_cols,
+            sensor_rename=self.sensor_rename,
+            sensor_rename_inv=self.sensor_rename_inv,
+            n_generations=self.n_generations,
+            pop_size=self.pop_size,
+            c_fa=self.c_fa,
+            c_fn=self.c_fn,
+            verbose=self.verbose_ga,
+            internal_holdout=0,
+        )
+        if not ga["success"]:
+            return ga, feature_df
+        out = compute_tolerance_features(
+            feature_df, ga["lowers_opt"], ga["uppers_opt"], ga["sensors_opt"],
+            self.sensor_rename_inv,
+        )
+        return ga, out
 
-        sensor_cols = [c for c in self.feature_df.columns if c != "warranty_claim"]
+    def _stage_optimize(self):
+        # Drop tolerance columns left by an earlier run so they are never treated as sensors
+        base = self.feature_df.drop(
+            columns=["within_tolerance_all", "out_of_tolerance_count"], errors="ignore"
+        )
+        # Snapshot feature_df before tolerance columns are appended (for Tab 2 display)
+        self.feature_df_pre_opt = base.copy()
+
+        sensor_cols = [c for c in base.columns if c != "warranty_claim"]
         self.sensor_cols = sensor_cols
 
         sensor_rename     = {s: f"sensor_{i+1}" for i, s in enumerate(sensor_cols)}
@@ -120,32 +155,16 @@ class WarrantyRiskPipeline:
         self.sensor_rename     = sensor_rename
         self.sensor_rename_inv = sensor_rename_inv
 
-        self.ga_result = run_ga_optimization(
-            feature_df=self.feature_df,
-            sensor_cols=sensor_cols,
-            sensor_rename=sensor_rename,
-            sensor_rename_inv=sensor_rename_inv,
-            n_generations=self.n_generations,
-            pop_size=self.pop_size,
-            c_fa=self.c_fa,
-            c_fn=self.c_fn,
-            verbose=self.verbose_ga,
-        )
-
-        if self.ga_result["success"]:
-            self.feature_df = compute_tolerance_features(
-                self.feature_df,
-                self.ga_result["lowers_opt"],
-                self.ga_result["uppers_opt"],
-                self.ga_result["sensors_opt"],
-                sensor_rename_inv,
-            )
+        # Split vehicles BEFORE anything looks at labels: the GA is fit on train
+        # only, the model/threshold are chosen on validation, test is held out.
+        self.split = split_vehicles(base["warranty_claim"].astype(int), random_state=self.seed)
+        self.ga_result, self.feature_df = self.fit_tolerance(base, self.split["train"])
 
     def _stage_predict(self):
         self.trained_sensor_uids, self.trained_max_seq_len = compute_padding_meta(self.manufacturing_df)
         self.trained_category_map = fit_category_map(self.manufacturing_df)
         self.ml_data      = build_padded_matrix(self.manufacturing_df, self.feature_df, self.trained_category_map)
-        self.train_result = train_and_select(self.ml_data)
+        self.train_result = train_and_select(self.ml_data, split=self.split)
         self.results_df   = self.train_result["results_df"]
 
     def _stage_explain(self, vehicle_idx: int = None):
