@@ -51,6 +51,7 @@ for key, default in [
     ("phase_learn_done", False),
     ("data_result", None),
     ("learn_result", None),
+    ("validation_result", None),
     ("operate_result", None),
 ]:
     if key not in st.session_state:
@@ -590,6 +591,38 @@ with st.expander("Tolerance optimization & model training", expanded=not st.sess
                     ]),
                     use_container_width=True, hide_index=True,
                 )
+
+            st.divider()
+            st.markdown("#### Statistical Validation")
+            st.caption(
+                "A single training run's F1 score doesn't say how stable that number is. "
+                "This retrains several times with different random seeds and compares against "
+                "a trivial baseline (flag anything out of tolerance on any sensor)."
+            )
+            n_runs = st.slider("Validation runs", 3, 10, 5, key="_n_validate_runs")
+            if st.button("Run statistical validation"):
+                with st.spinner(f"Retraining {n_runs} times..."):
+                    st.session_state.validation_result = agent.validate(n_runs=n_runs)
+
+            vr = st.session_state.get("validation_result")
+            if vr is not None:
+                vc1, vc2, vc3, vc4 = st.columns(4)
+                vc1.metric("F1 (mean ± std)", f"{vr.f1_mean:.3f} ± {vr.f1_std:.3f}")
+                vc2.metric("Precision (mean ± std)", f"{vr.precision_mean:.3f} ± {vr.precision_std:.3f}")
+                vc3.metric("Recall (mean ± std)", f"{vr.recall_mean:.3f} ± {vr.recall_std:.3f}")
+                vc4.metric("AUC (mean ± std)", f"{vr.auc_mean:.3f} ± {vr.auc_std:.3f}")
+                st.metric(
+                    "Lift over trivial baseline (F1)",
+                    f"{vr.lift_over_baseline:+.3f}",
+                    help=f"Baseline F1 (out-of-tolerance-on-any-sensor rule): {vr.baseline_f1_mean:.3f}",
+                )
+                st.markdown("**Per-run results**")
+                st.dataframe(pd.DataFrame(vr.per_run), use_container_width=True, hide_index=True)
+                if len(set(r["best_name"] for r in vr.per_run)) > 1:
+                    st.warning(
+                        "The best model changed across runs — the current single-run selection "
+                        "isn't necessarily stable. Treat the \"best model\" label with caution."
+                    )
 
 if not st.session_state.phase_learn_done:
     st.stop()

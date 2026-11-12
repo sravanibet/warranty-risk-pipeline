@@ -21,6 +21,7 @@ except ImportError:
     generate_manufacturing_data = None
 
 from .labels.features import build_feature_matrix
+from .preprocessing.encoding import fit_category_map
 from .labels.sigmoid import generate_warranty_labels
 from .optimization.ga_optimizer import run_ga_optimization
 from .optimization.tolerance_features import compute_tolerance_features
@@ -72,6 +73,7 @@ class WarrantyRiskPipeline:
         self.global_lime_result  = None
         self.trained_sensor_uids = None   # fixed column layout for live-scoring new vehicles
         self.trained_max_seq_len = None
+        self.trained_category_map = None  # categorical code map fitted at training time
 
     # ------------------------------------------------------------------
     def run(self, explain_vehicle_idx: int = None) -> "WarrantyRiskPipeline":
@@ -141,7 +143,8 @@ class WarrantyRiskPipeline:
 
     def _stage_predict(self):
         self.trained_sensor_uids, self.trained_max_seq_len = compute_padding_meta(self.manufacturing_df)
-        self.ml_data      = build_padded_matrix(self.manufacturing_df, self.feature_df)
+        self.trained_category_map = fit_category_map(self.manufacturing_df)
+        self.ml_data      = build_padded_matrix(self.manufacturing_df, self.feature_df, self.trained_category_map)
         self.train_result = train_and_select(self.ml_data)
         self.results_df   = self.train_result["results_df"]
 
@@ -195,7 +198,7 @@ class WarrantyRiskPipeline:
         tr = self.train_result
         vehicle_id = str(readings_df["serial_number"].iloc[0])
 
-        feature_row = build_feature_matrix(readings_df)
+        feature_row = build_feature_matrix(readings_df, self.trained_category_map)
         if self.ga_result and self.ga_result.get("success"):
             feature_row = compute_tolerance_features(
                 feature_row,
@@ -206,7 +209,8 @@ class WarrantyRiskPipeline:
             )
 
         padded_row = pad_single_vehicle(
-            readings_df, self.trained_sensor_uids, self.trained_max_seq_len
+            readings_df, self.trained_sensor_uids, self.trained_max_seq_len,
+            self.trained_category_map,
         )
         label_cols = [c for c in ["within_tolerance_all", "out_of_tolerance_count"]
                       if c in feature_row.columns]

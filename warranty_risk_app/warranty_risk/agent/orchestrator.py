@@ -18,6 +18,8 @@ from .data_validator import validate_upload, UploadValidationResult
 from .audit_log import AuditLog
 from .feedback import compute_weight_adjustments, apply_weight_adjustments
 from .narration import Narrator
+from . import model_registry
+from .validation import validate_learning, ValidationResult
 
 try:
     import plant_simulator  # noqa: F401
@@ -317,11 +319,21 @@ class QualityMonitoringAgent:
             fallback=fallback_narration,
         )
 
+        saved_path = model_registry.save(
+            tr, f1_val,
+            preprocessing={
+                "category_map": self.pipe.trained_category_map,
+                "sensor_uids": list(self.pipe.trained_sensor_uids),
+                "max_seq_len": self.pipe.trained_max_seq_len,
+            },
+        )
+
         self.audit_log.record(
             phase="learn", action="train",
             detail=narration,
             best_model=tr["best_name"], f1=f1_val,
             weight_adjustments=[a.__dict__ for a in adjustments],
+            model_saved_to=str(saved_path),
         )
 
         return LearnResult(
@@ -331,6 +343,31 @@ class QualityMonitoringAgent:
             results_df=self.pipe.results_df,
             weight_adjustments=adjustments,
         )
+
+    def validate(self, n_runs: int = 5) -> ValidationResult:
+        """
+        Re-trains n_runs times with different seeds and reports mean +/- std
+        for F1/Precision/Recall/AUC, plus a trivial baseline comparison —
+        answers "how much do I trust this number" instead of reporting one
+        single-run metric as if it were exact.
+        """
+        if self.pipe is None or self.pipe.ml_data is None:
+            raise RuntimeError("No data available yet — complete Learning before validating.")
+
+        result = validate_learning(self.pipe, n_runs=n_runs)
+
+        self.audit_log.record(
+            phase="learn", action="validate",
+            detail=(
+                f"Validated over {result.n_runs} runs: "
+                f"F1 = {result.f1_mean:.3f} +/- {result.f1_std:.3f}, "
+                f"baseline F1 = {result.baseline_f1_mean:.3f} "
+                f"(lift = {result.lift_over_baseline:+.3f})."
+            ),
+            f1_mean=result.f1_mean, f1_std=result.f1_std,
+            baseline_f1_mean=result.baseline_f1_mean,
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Phase 4: Operate
