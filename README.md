@@ -514,7 +514,7 @@ print(pipe.results_df)
 - [x] Variable-length time-series padding and masking
 - [x] 9-model classifier evaluation with class-imbalance handling and optimal threshold selection
 - [x] Baseline vs. Enhanced comparison using identical model architecture (`clone`)
-- [x] LIME explanations — single vehicle (3-panel) and global (balanced sample)
+- [x] LIME explanations -- single vehicle (3-panel) and global (balanced sample)
 - [x] Clean end-to-end notebook (`05_pipeline_clean.ipynb`)
 - [x] Architecture diagrams for all five pipeline stages
 - [x] Modular Python package (`warranty_risk_app/warranty_risk/`)
@@ -545,10 +545,10 @@ These affect how far the reported metrics can be trusted and should be fixed bef
 - [ ] **Feedback on real labels only**: adjust risk weights only from real claims, measured on held-out vehicles
 - [ ] **Partial-vehicle scoring**: train on truncated station prefixes or use a sequence model
 
-- [ ] **Real Plant Data Integration** — Replace the simulator with actual plant sensor feeds; the package API accepts any DataFrame matching the expected schema
-- [ ] **End-to-End Pipeline Adaptation for Live Data** — Adapt preprocessing, feature engineering, tolerance optimization, and model retraining to handle the characteristics of real sensor data (noise, missing readings, calibration drift)
-- [ ] **Multi-Facility Scalability** — Parameterize the plant config to support multiple facilities with different station layouts and sensor configurations
-- [ ] **Multi-Category Warranty Classification** — Extend the label schema from binary (claim / no-claim) to multi-class warranty categories aligned with real claim codes, enabling more targeted root-cause diagnosis
+- [ ] **Real Plant Data Integration**  Replace the simulator with actual plant sensor feeds; the package API accepts any DataFrame matching the expected schema
+- [ ] **End-to-End Pipeline Adaptation for Live Data** Adapt preprocessing, feature engineering, tolerance optimization, and model retraining to handle the characteristics of real sensor data (noise, missing readings, calibration drift)
+- [ ] **Multi-Facility Scalability** Parameterize the plant config to support multiple facilities with different station layouts and sensor configurations
+- [ ] **Multi-Category Warranty Classification**  Extend the label schema from binary (claim / no-claim) to multi-class warranty categories aligned with real claim codes, enabling more targeted root-cause diagnosis
 
 ---
 
