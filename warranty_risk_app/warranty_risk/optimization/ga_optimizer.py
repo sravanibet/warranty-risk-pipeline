@@ -1,7 +1,7 @@
-"""
-GA Tolerance Optimizer — core code copied verbatim from
-ToleranceOptimization_June13_2025_ver2.py; only the I/O wrapper differs.
-"""
+
+# # GA Tolerance Optimizer — core code copied verbatim from
+# ToleranceOptimization_June13_2025_ver2.py; only the I/O wrapper differs.
+ 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -61,18 +61,16 @@ def run_ga_optimization(
     verbose: bool = False,
     internal_holdout: float = 0.2,
 ) -> dict:
-    """
-    Run the genetic algorithm on feature_df and return optimized bounds.
-
-    The GA uses claim labels, so feature_df must contain TRAIN vehicles only.
-    internal_holdout is the fraction of the rows passed in that is discarded
-    before optimising (legacy behaviour); pass 0 when the caller has already
-    split train / validation / test and wants the GA to use every row given.
-
-    Returns a dict with keys:
-        lowers_opt, uppers_opt, df_results, stats,
-        sensors_opt, C_FA, C_FN, success (bool)
-    """
+    # Run the genetic algorithm on feature_df and return optimized bounds.
+    #
+    # The GA uses claim labels, so feature_df must contain TRAIN vehicles only.
+    # internal_holdout is the fraction of the rows passed in that is discarded
+    # before optimising (legacy behaviour); pass 0 when the caller has already
+    # split train / validation / test and wants the GA to use every row given.
+    #
+    # Returns a dict with keys:
+    #     lowers_opt, uppers_opt, df_results, stats,
+    #     sensors_opt, C_FA, C_FN, success (bool)
     # Build optimizer input (sensor_1..N + Claim Type)
     opt_df = feature_df[sensor_cols + ["warranty_claim"]].copy()
     opt_df = opt_df.rename(columns=sensor_rename)

@@ -1,8 +1,6 @@
-"""
-Renders the station topology of a plant config as a directed-graph diagram,
-so the Setup phase can show the user what the agent understood before they
-confirm it.
-"""
+# Renders the station topology of a plant config as a directed-graph diagram,
+# so the Setup phase can show the user what the agent understood before they
+# confirm it.
 from pathlib import Path
 
 import matplotlib
@@ -55,7 +53,7 @@ def render_topology(config: dict, out_path: Path = None) -> Path:
 
 
 def _layered_layout(graph: "nx.DiGraph") -> dict:
-    """Fallback layout (no graphviz binary required) — layers nodes by BFS depth."""
+    # Fallback layout (no graphviz binary required) — layers nodes by BFS depth.
     roots = [n for n in graph.nodes if graph.in_degree(n) == 0] or list(graph.nodes)[:1]
     depth = {}
     frontier = [(r, 0) for r in roots]

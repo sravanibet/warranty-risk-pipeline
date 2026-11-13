@@ -1,8 +1,6 @@
-"""
-Persistent, append-only log of every decision the agent makes — what the
-Ampcome article calls the audit trail that becomes "a learning resource that
-continuously improves the governance rules." Each entry is one JSON line.
-"""
+# Persistent, append-only log of every decision the agent makes — what the
+# Ampcome article calls the audit trail that becomes "a learning resource that
+# continuously improves the governance rules." Each entry is one JSON line.
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

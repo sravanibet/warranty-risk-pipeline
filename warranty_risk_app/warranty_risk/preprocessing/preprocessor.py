@@ -1,15 +1,13 @@
-"""
-Preprocessing for the warranty risk pipeline.
-
-`Preprocessor` follows the fit / transform pattern: everything it *learns*
-(which columns to drop, which median to impute) comes from the data passed to
-`fit` only, and `transform` re-applies exactly that to any other data. Fit it
-on training vehicles and transform validation / test / live rows with it, so no
-information from held-out data leaks into the imputation or column selection.
-
-`auto_preprocess` keeps the original one-shot interface (fit and transform on
-the same DataFrame, returning a step-by-step report for the UI).
-"""
+# Preprocessing for the warranty risk pipeline.
+#
+# `Preprocessor` follows the fit / transform pattern: everything it *learns*
+# (which columns to drop, which median to impute) comes from the data passed to
+# `fit` only, and `transform` re-applies exactly that to any other data. Fit it
+# on training vehicles and transform validation / test / live rows with it, so no
+# information from held-out data leaks into the imputation or column selection.
+#
+# `auto_preprocess` keeps the original one-shot interface (fit and transform on
+# the same DataFrame, returning a step-by-step report for the UI).
 import pandas as pd
 
 _TRUE = {"1", "true", "yes", "y", "t"}
@@ -17,7 +15,7 @@ _FALSE = {"0", "false", "no", "n", "f"}
 
 
 def _coerce_label(series: pd.Series) -> pd.Series:
-    """Cast a label column to int, accepting 0/1, bool and common yes/no strings."""
+    # Cast a label column to int, accepting 0/1, bool and common yes/no strings.
     if pd.api.types.is_bool_dtype(series) or pd.api.types.is_numeric_dtype(series):
         return series.astype(int)
     lowered = series.astype(str).str.strip().str.lower()
@@ -35,7 +33,7 @@ class Preprocessor:
 
     # ------------------------------------------------------------------ fit
     def fit(self, df: pd.DataFrame) -> "Preprocessor":
-        """Learn drop-lists and imputation values from df (use training data only)."""
+        # Learn drop-lists and imputation values from df (use training data only).
         df = df.drop_duplicates()
         self.fit_report_ = []
         self.dropped_missing_ = {}      # col -> (n_missing, pct)
@@ -75,12 +73,10 @@ class Preprocessor:
     # ------------------------------------------------------------ transform
     def transform(self, df: pd.DataFrame, drop_duplicates: bool = False,
                   strict_label: bool = True) -> pd.DataFrame:
-        """
-        Apply what fit learned. Rows are only removed for a missing label (and
-        duplicates, when asked — do that for training data, not live rows).
-        Raises if a column kept at fit time is absent, or (strict_label) if the
-        label has values that can't be read as 0/1.
-        """
+        # Apply what fit learned. Rows are only removed for a missing label (and
+        # duplicates, when asked — do that for training data, not live rows).
+        # Raises if a column kept at fit time is absent, or (strict_label) if the
+        # label has values that can't be read as 0/1.
         if not self.fitted_:
             raise RuntimeError("Preprocessor must be fit before transform.")
         missing = [c for c in self.feature_cols_ if c not in df.columns]
@@ -107,7 +103,7 @@ class Preprocessor:
 
     # --------------------------------------------------------- fit_transform
     def fit_transform(self, df: pd.DataFrame):
-        """Fit and transform the same data. Returns (cleaned_df, report)."""
+        # Fit and transform the same data. Returns (cleaned_df, report).
         self.fit(df)
         n_dup = int(df.duplicated().sum())
         cleaned = self.transform(df, drop_duplicates=True, strict_label=False)
@@ -171,11 +167,9 @@ class Preprocessor:
 
 
 def auto_preprocess(df: pd.DataFrame, label_col: str = None):
-    """
-    One-shot cleaning (fit and transform on the same data).
-
-    Returns (cleaned_df, report); report is a list of dicts with keys
-    step, detail, status ("ok" | "warning" | "info"). For anything that will be
-    split into train/test, use Preprocessor: fit on train, transform the rest.
-    """
+    # One-shot cleaning (fit and transform on the same data).
+    #
+    # Returns (cleaned_df, report); report is a list of dicts with keys
+    # step, detail, status ("ok" | "warning" | "info"). For anything that will be
+    # split into train/test, use Preprocessor: fit on train, transform the rest.
     return Preprocessor(label_col=label_col).fit_transform(df)

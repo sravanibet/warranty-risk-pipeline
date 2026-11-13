@@ -51,7 +51,7 @@ def valid_config():
 
 @pytest.fixture
 def synthetic_feature_df():
-    """A small, deterministic feature matrix with a known warranty_claim label."""
+    # A small, deterministic feature matrix with a known warranty_claim label.
     rng = np.random.RandomState(42)
     n = 60
     sns_a1 = rng.normal(5, 2, n)
@@ -68,7 +68,7 @@ def synthetic_feature_df():
 
 @pytest.fixture
 def synthetic_manufacturing_readings():
-    """Raw sensor readings for one vehicle, shaped like manufacturing_df."""
+    # Raw sensor readings for one vehicle, shaped like manufacturing_df.
     return pd.DataFrame([
         {"serial_number": "SN00001", "station_uid": "STN_A", "sensor_uid": "SNS_A1",
          "sensor_type": "scalar", "timestamp": pd.Timestamp("2026-01-01T00:00:00"), "value": 4.2},

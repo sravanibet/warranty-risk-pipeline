@@ -33,7 +33,7 @@ _CANDIDATES = {
 
 
 def _optimal_threshold(proba: np.ndarray, y_true: np.ndarray) -> float:
-    """F1-maximising threshold. Call on VALIDATION data, never on the test set."""
+    # F1-maximising threshold. Call on VALIDATION data, never on the test set.
     if len(np.unique(y_true)) < 2:
         return 0.5
     pr, rc, th = precision_recall_curve(y_true, proba)
@@ -47,14 +47,20 @@ def _safe_auc(y_true, proba) -> float:
 
 def split_vehicles(y: pd.Series, val_size: float = 0.2, test_size: float = 0.2,
                    random_state: int = 42) -> dict:
-    """
-    Split vehicles (the index of y) into disjoint train / validation / test sets,
-    stratified on the label. Do this BEFORE anything that looks at labels
-    (tolerance optimisation, feature selection, imputation) so those can be fit
-    on `train` only.
-
-    Returns {"train": Index, "val": Index, "test": Index}.
-    """
+    # Split vehicles (the index of y) into disjoint train / validation / test sets,
+    # stratified on the label.
+    #
+    # Tolerance optimisation and model selection use only the train and validation
+    # sets; the test set stays untouched and is used only for the final metrics.
+    # Do this BEFORE anything that looks at labels (tolerance optimisation,
+    # feature selection, imputation) so those can be fit on `train` only.
+    #
+    # Returns {"train": Index, "val": Index, "test": Index}.
+    # Split by vehicle BEFORE anything uses labels, so the tolerance optimiser
+    # (which uses claim labels) can be fit on train vehicles only and test
+    # vehicles stay completely unseen.
+    # We split on positional indices because the vehicle ids can be an
+    # Arrow-backed pandas Index, which train_test_split can't index directly.
     idx = y.index
     pos = np.arange(len(y))
     labels = y.to_numpy()
@@ -76,23 +82,21 @@ def train_and_select(
     split: dict = None,
     val_size: float = 0.2,
 ) -> dict:
-    """
-    Train all candidate classifiers on the train vehicles, choose the best model
-    AND its decision threshold on the validation vehicles, and report metrics
-    once on the untouched test vehicles.
-
-    split: optional {"train","val","test"} vehicle indices from split_vehicles
-    (pass the one used to fit the tolerance optimiser so no test vehicle ever
-    influenced a fitted component). If omitted, a new split is made here.
-
-    results_df columns: Model, Val_F1 (selection criterion), then F1 / Precision /
-    Recall / AUC / Threshold, which are TEST-set metrics at the validation-chosen
-    threshold. Sorted by Val_F1.
-
-    Also returns best_model, best_name, best_threshold, best_proba, best_preds
-    (test set), X/y for train, val and test (plus scaled arrays), scaler,
-    feat_cols, tol_cols and the split used.
-    """
+    # Train all candidate classifiers on the train vehicles, choose the best model
+    # AND its decision threshold on the validation vehicles, and report metrics
+    # once on the untouched test vehicles.
+    #
+    # split: optional {"train","val","test"} vehicle indices from split_vehicles
+    # (pass the one used to fit the tolerance optimiser so no test vehicle ever
+    # influenced a fitted component). If omitted, a new split is made here.
+    #
+    # results_df columns: Model, Val_F1 (selection criterion), then F1 / Precision /
+    # Recall / AUC / Threshold, which are TEST-set metrics at the validation-chosen
+    # threshold. Sorted by Val_F1.
+    #
+    # Also returns best_model, best_name, best_threshold, best_proba, best_preds
+    # (test set), X/y for train, val and test (plus scaled arrays), scaler,
+    # feat_cols, tol_cols and the split used.
     tol_cols  = ["within_tolerance_all", "out_of_tolerance_count"]
     feat_cols = [c for c in ml_data.columns if c != "warranty_claim"]
 
@@ -105,6 +109,8 @@ def train_and_select(
     X_val,   y_val   = ml_data.loc[split["val"],   feat_cols], y_all.loc[split["val"]]
     X_test,  y_test  = ml_data.loc[split["test"],  feat_cols], y_all.loc[split["test"]]
 
+    # The scaler is fit on train only; val and test are just transformed with
+    # it, so their statistics never leak into training.
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_val_scaled   = scaler.transform(X_val)
@@ -112,6 +118,8 @@ def train_and_select(
 
     rows = []
     for name, base_clf in _CANDIDATES.items():
+        # clone() gives each run a fresh, unfitted model so nothing is
+        # carried over between calls or between splits.
         clf = clone(base_clf)
         scaled = name in SCALE_NEEDED
         Xtr = X_train_scaled if scaled else X_train.values
@@ -120,6 +128,8 @@ def train_and_select(
         clf.fit(Xtr, y_train)
 
         proba_val = clf.predict_proba(Xva)[:, 1]
+        # The decision threshold is chosen on the validation set. Choosing it
+        # on test would make the test score look better than it really is.
         thr = _optimal_threshold(proba_val, y_val)                  # threshold: validation
         val_f1 = f1_score(y_val, (proba_val >= thr).astype(int), zero_division=0)
 
@@ -136,6 +146,8 @@ def train_and_select(
             "_clf":      clf,
         })
 
+    # The best model is picked by validation F1. The test set is only used to
+    # report the final numbers, once.
     results_df = pd.DataFrame(rows).sort_values("Val_F1", ascending=False).reset_index(drop=True)
 
     best_row       = results_df.iloc[0]
@@ -171,13 +183,11 @@ def train_and_select(
 
 
 def compare_baseline_enhanced(train_result: dict) -> dict:
-    """
-    Retrain clone(best_model) twice (threshold chosen on validation, metrics on test):
-      - Baseline: time-series features only (no tolerance columns)
-      - Enhanced: time-series + tolerance features
-
-    Returns metrics and predictions for both variants.
-    """
+    # Retrain clone(best_model) twice (threshold chosen on validation, metrics on test):
+    #   - Baseline: time-series features only (no tolerance columns)
+    #   - Enhanced: time-series + tolerance features
+    #
+    # Returns metrics and predictions for both variants.
     best_model    = train_result["best_model"]
     best_name     = train_result["best_name"]
     X_train       = train_result["X_train"]

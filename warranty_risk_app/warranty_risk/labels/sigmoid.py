@@ -5,10 +5,8 @@ DEFAULT_RISK_WEIGHT = 1.0
 
 
 def _weights_from_config(config: dict) -> dict:
-    """
-    Build {sensor_uid: weight} from plant config. A sensor's "risk_weight" field
-    may be a number, "excluded" (weight 0), or absent (falls back to default).
-    """
+    # Build {sensor_uid: weight} from plant config. A sensor's "risk_weight" field
+    # may be a number, "excluded" (weight 0), or absent (falls back to default).
     weights = {}
     for station in config.get("stations", []):
         for sensor in station.get("sensors", []):
@@ -27,20 +25,18 @@ def generate_warranty_labels(
     max_claim_rate: float = 0.12,
     random_state: int = None,
 ) -> pd.DataFrame:
-    """
-    Add a 'warranty_claim' column using a stochastic sigmoid approach.
-
-    Sensor risk weights come from `config` (each sensor's optional "risk_weight"
-    field); sensors without one default to DEFAULT_RISK_WEIGHT. If no config is
-    given, every sensor column present in feature_df gets the default weight.
-
-    Avoids the circular dependency of NN top-10%:
-      p_claim = sigmoid(k × (risk_norm − threshold))
-      warranty_claim ~ Binomial(1, p_claim)
-
-    Threshold is scanned adaptively until E[p_claim] <= max_claim_rate.
-    Returns feature_df with the new column appended (does not mutate input).
-    """
+    # Add a 'warranty_claim' column using a stochastic sigmoid approach.
+    #
+    # Sensor risk weights come from `config` (each sensor's optional "risk_weight"
+    # field); sensors without one default to DEFAULT_RISK_WEIGHT. If no config is
+    # given, every sensor column present in feature_df gets the default weight.
+    #
+    # Avoids the circular dependency of NN top-10%:
+    #   p_claim = sigmoid(k × (risk_norm − threshold))
+    #   warranty_claim ~ Binomial(1, p_claim)
+    #
+    # Threshold is scanned adaptively until E[p_claim] <= max_claim_rate.
+    # Returns feature_df with the new column appended (does not mutate input).
     df = feature_df.copy()
 
     weights = _weights_from_config(config) if config else {}

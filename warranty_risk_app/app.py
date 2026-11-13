@@ -1,17 +1,15 @@
-"""
-Quality Monitoring Agent — Streamlit UI
-Run: streamlit run warranty_risk_app/app.py
-
-Four phases, orchestrated by warranty_risk.agent.QualityMonitoringAgent:
-  1. Setup    — register + confirm the facility configuration
-  2. Data     — upload real data or simulate it
-  3. Learning — tolerance optimization + model training
-  4. Operate  — score vehicles and explain why
-
-Developed by: Noor-E Jannat, PhD Candidate
-              Industrial & Systems Engineering (ISE) Department
-              Wayne State University
-"""
+# Quality Monitoring Agent — Streamlit UI
+# Run: streamlit run warranty_risk_app/app.py
+#
+# Four phases, orchestrated by warranty_risk.agent.QualityMonitoringAgent:
+#   1. Setup    — register + confirm the facility configuration
+#   2. Data     — upload real data or simulate it
+#   3. Learning — tolerance optimization + model training
+#   4. Operate  — score vehicles and explain why
+#
+# Developed by: Noor-E Jannat, PhD Candidate
+#               Industrial & Systems Engineering (ISE) Department
+#               Wayne State University
 import sys
 from pathlib import Path
 
@@ -63,7 +61,7 @@ agent = st.session_state.agent
 # ── Shared rendering helpers (unchanged from the original tab layout) ──────────
 
 def _render_preprocess_report(report: list, df_before, df_after):
-    """Render the auto-preprocessing report with before/after comparison."""
+    # Render the auto-preprocessing report with before/after comparison.
     col_before, col_after = st.columns(2)
     col_before.metric("Rows before", f"{len(df_before):,}")
     col_after.metric("Rows after",   f"{len(df_after):,}")
@@ -105,7 +103,7 @@ def _render_preprocess_report(report: list, df_before, df_after):
 
 
 def _render_ga_tab(ga_result: dict, feature_df: pd.DataFrame, c_fa: float):
-    """Render Tolerance Optimization section content."""
+    # Render Tolerance Optimization section content.
     st.subheader("GA Tolerance Optimization")
     if not ga_result.get("success"):
         st.error("GA optimization did not find a valid solution.")
@@ -208,7 +206,7 @@ def _render_ga_tab(ga_result: dict, feature_df: pd.DataFrame, c_fa: float):
 
 
 def _render_prediction_tab(train_result: dict, results_df: pd.DataFrame):
-    """Render Model Training & Selection section content."""
+    # Render Model Training & Selection section content.
     from sklearn.metrics import f1_score, precision_score, recall_score
 
     st.subheader("Model Training & Selection (Tolerance-Enhanced Features)")
@@ -275,7 +273,7 @@ def _render_prediction_tab(train_result: dict, results_df: pd.DataFrame):
 
 
 def _render_lime_tab(lime_result: dict, global_lime_result: dict, train_result: dict):
-    """Render LIME Explanation section content."""
+    # Render LIME Explanation section content.
     st.subheader("LIME Explanation")
 
     lr         = lime_result

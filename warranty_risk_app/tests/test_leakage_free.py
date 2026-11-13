@@ -1,7 +1,5 @@
-"""
-The evaluation must be leakage-free: no test vehicle's label may influence any
-fitted component (tolerance bounds, model choice, decision threshold).
-"""
+# The evaluation must be leakage-free: no test vehicle's label may influence any
+# fitted component (tolerance bounds, model choice, decision threshold).
 import numpy as np
 import pandas as pd
 import pytest
@@ -35,7 +33,7 @@ def test_split_is_disjoint_complete_and_stratified():
 
 
 def test_ga_only_ever_sees_train_vehicles(learned_pipe, monkeypatch):
-    """Spy on what the optimiser receives; it must be exactly the train vehicles."""
+    # Spy on what the optimiser receives; it must be exactly the train vehicles.
     import warranty_risk.pipeline as pl
     seen = {}
     real = pl.run_ga_optimization

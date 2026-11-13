@@ -1,13 +1,11 @@
-"""
-Publishes one simulated vehicle's sensor readings to MQTT, one message per
-reading — for testing stream_quality_agent.py without a real EMQX connection.
-
-Requires a local MQTT broker (e.g. Mosquitto: `mosquitto` with default
-config listens on localhost:1883) and the plant_simulator package.
-
-Run:
-    python mock_publisher.py
-"""
+# Publishes one simulated vehicle's sensor readings to MQTT, one message per
+# reading — for testing stream_quality_agent.py without a real EMQX connection.
+#
+# Requires a local MQTT broker (e.g. Mosquitto: `mosquitto` with default
+# config listens on localhost:1883) and the plant_simulator package.
+#
+# Run:
+#     python mock_publisher.py
 import json
 import logging
 import sys

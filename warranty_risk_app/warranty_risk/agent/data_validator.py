@@ -1,7 +1,7 @@
-"""
-Cross-checks uploaded data against the registered plant config: right sensors,
-right types, nothing missing — before handing off to auto_preprocess.
-"""
+
+#Cross-checks uploaded data against the registered plant config: right sensors,
+#right types, nothing missing — before handing off to auto_preprocess.
+
 from dataclasses import dataclass, field
 
 import pandas as pd

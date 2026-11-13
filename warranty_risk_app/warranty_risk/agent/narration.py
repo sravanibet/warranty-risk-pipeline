@@ -1,14 +1,12 @@
-"""
-Generates the agent's plain-language narration using Gemini 2.5 — the model
-IntelliMake (the parent project) requires. This is not a permanent model
-lock-in for the rest of the codebase, just what this narration layer uses
-for now, per IntelliMake's current requirement.
-
-Falls back to a plain templated sentence (passed in by the caller) whenever
-no API key is configured, the SDK isn't installed, or the call fails for any
-reason — so the agent's phases never break or block on network/LLM issues,
-including live demos.
-"""
+# Generates the agent's plain-language narration using Gemini 2.5 — the model
+# IntelliMake (the parent project) requires. This is not a permanent model
+# lock-in for the rest of the codebase, just what this narration layer uses
+# for now, per IntelliMake's current requirement.
+#
+# Falls back to a plain templated sentence (passed in by the caller) whenever
+# no API key is configured, the SDK isn't installed, or the call fails for any
+# reason — so the agent's phases never break or block on network/LLM issues,
+# including live demos.
 import os
 
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -30,10 +28,8 @@ _SYSTEM_INSTRUCTION = (
 
 
 class Narrator:
-    """
-    Wraps Gemini 2.5. If unavailable/unconfigured, `enabled` is False and
-    `narrate()` always returns the caller-supplied fallback untouched.
-    """
+    # Wraps Gemini 2.5. If unavailable/unconfigured, `enabled` is False and
+    # `narrate()` always returns the caller-supplied fallback untouched.
 
     def __init__(self, model: str = None, api_key: str = None):
         self.model = model or os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)

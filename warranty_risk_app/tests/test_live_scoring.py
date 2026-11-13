@@ -33,8 +33,8 @@ def test_score_vehicle_from_readings_returns_valid_probability(trained_agent):
 
 
 def test_score_vehicle_uses_consistent_feature_columns(trained_agent):
-    """Regression test for the train/serve skew bug: the padded single-vehicle
-    row must align to the exact columns the model was trained on."""
+    # Regression test for the train/serve skew bug: the padded single-vehicle
+    #     row must align to the exact columns the model was trained on.
     from plant_simulator import generate_vehicle_metadata, generate_manufacturing_data
     from warranty_risk.config import get_stations
 

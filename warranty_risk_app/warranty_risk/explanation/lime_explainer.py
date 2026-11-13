@@ -24,18 +24,16 @@ def explain_instance_row(
     predict_fn,
     num_features: int = 10,
 ) -> dict:
-    """
-    Generate a LIME explanation for an arbitrary single feature vector —
-    used both for a row already in X_test (via explain_vehicle) and for a
-    brand-new vehicle scored live (not part of any train/test split).
-
-    Returns
-    -------
-    dict with keys:
-        lime_df     — DataFrame of feature contributions
-        proba       — claim probability (float)
-        exp         — raw LimeExplanation object
-    """
+    # Generate a LIME explanation for an arbitrary single feature vector —
+    # used both for a row already in X_test (via explain_vehicle) and for a
+    # brand-new vehicle scored live (not part of any train/test split).
+    #
+    # Returns
+    # -------
+    # dict with keys:
+    #     lime_df     — DataFrame of feature contributions
+    #     proba       — claim probability (float)
+    #     exp         — raw LimeExplanation object
     explainer = _get_explainer(X_train, feature_names)
 
     exp   = explainer.explain_instance(instance, predict_fn, num_features=num_features)
@@ -57,28 +55,24 @@ def explain_vehicle(
     predict_fn,
     num_features: int = 10,
 ) -> dict:
-    """
-    Generate a LIME explanation for a single test-set vehicle.
-
-    Parameters
-    ----------
-    vehicle_idx  : row index into X_test
-    X_test       : scaled/raw test feature array
-    X_train      : scaled/raw train feature array (for explainer background)
-    feature_names: list of feature column names
-    predict_fn   : model.predict_proba (callable)
-    num_features : top features to show
-    """
+    # Generate a LIME explanation for a single test-set vehicle.
+    #
+    # Parameters
+    # ----------
+    # vehicle_idx  : row index into X_test
+    # X_test       : scaled/raw test feature array
+    # X_train      : scaled/raw train feature array (for explainer background)
+    # feature_names: list of feature column names
+    # predict_fn   : model.predict_proba (callable)
+    # num_features : top features to show
     return explain_instance_row(X_test[vehicle_idx], X_train, feature_names, predict_fn, num_features)
 
 
 def plot_lime_instance(lime_df: pd.DataFrame, proba: float, vehicle_id: str = "") -> plt.Figure:
-    """
-    Three-panel LIME bar chart:
-      1. Combined (orange=positive, blue=negative)
-      2. Positive contributors only
-      3. Negative contributors only
-    """
+    # Three-panel LIME bar chart:
+    #   1. Combined (orange=positive, blue=negative)
+    #   2. Positive contributors only
+    #   3. Negative contributors only
     fig, axes = plt.subplots(1, 3, figsize=(10.4, 3.2), dpi=150)
     title = f"LIME Explanation — {vehicle_id}  (p_claim={proba:.3f})" if vehicle_id else f"LIME Explanation (p_claim={proba:.3f})"
     fig.suptitle(title, fontsize=13, fontweight="bold")
@@ -123,13 +117,11 @@ def global_lime(
     n_low: int = 5,
     num_features: int = 10,
 ) -> dict:
-    """
-    Aggregate LIME over n_high high-risk + n_low low-risk test vehicles.
-
-    Returns a dict with:
-        global_df  — DataFrame of mean absolute LIME weights per feature
-        fig        — bar chart of top features
-    """
+    # Aggregate LIME over n_high high-risk + n_low low-risk test vehicles.
+    #
+    # Returns a dict with:
+    #     global_df  — DataFrame of mean absolute LIME weights per feature
+    #     fig        — bar chart of top features
     probas = predict_fn(X_test)[:, 1]
     sorted_idx = np.argsort(probas)
 

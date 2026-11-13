@@ -1,9 +1,7 @@
-"""
-QualityMonitoringAgent — orchestrates the four phases described in plan.md:
-Setup, Data, Learning, Operate. It validates, narrates, and gates; the actual
-computation stays in the existing pipeline modules (WarrantyRiskPipeline and
-friends) which this class composes rather than reimplements.
-"""
+# QualityMonitoringAgent — orchestrates the four phases described in plan.md:
+# Setup, Data, Learning, Operate. It validates, narrates, and gates; the actual
+# computation stays in the existing pipeline modules (WarrantyRiskPipeline and
+# friends) which this class composes rather than reimplements.
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,10 +63,8 @@ class OperateResult:
 
 
 class QualityMonitoringAgent:
-    """
-    Wraps a WarrantyRiskPipeline instance and drives it phase by phase,
-    adding validation and plain-language narration at each step.
-    """
+    # Wraps a WarrantyRiskPipeline instance and drives it phase by phase,
+    # adding validation and plain-language narration at each step.
 
     def __init__(self):
         self.pipe: WarrantyRiskPipeline = None
@@ -345,12 +341,10 @@ class QualityMonitoringAgent:
         )
 
     def validate(self, n_runs: int = 5) -> ValidationResult:
-        """
-        Re-trains n_runs times with different seeds and reports mean +/- std
-        for F1/Precision/Recall/AUC, plus a trivial baseline comparison —
-        answers "how much do I trust this number" instead of reporting one
-        single-run metric as if it were exact.
-        """
+        # Re-trains n_runs times with different seeds and reports mean +/- std
+        # for F1/Precision/Recall/AUC, plus a trivial baseline comparison —
+        # answers "how much do I trust this number" instead of reporting one
+        # single-run metric as if it were exact.
         if self.pipe is None or self.pipe.ml_data is None:
             raise RuntimeError("No data available yet — complete Learning before validating.")
 

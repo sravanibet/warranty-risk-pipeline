@@ -1,32 +1,30 @@
-"""
-Standalone Quality Monitoring Agent process — Listener -> Detection -> Alerting,
-matching IntelliMake_Architecture.pdf section 2.
-
-This is NOT the Streamlit app (that's a human-facing dashboard for walking
-through Setup/Data/Learning/Operate by hand). This script is the long-running
-process that would actually sit behind EMQX in production: it listens for
-live sensor readings, scores each finished vehicle against an already-trained
-model, and publishes the result back out as an alert.
-
-Run:
-    python stream_quality_agent.py
-
-Configuration (environment variables — see agent/mqtt_listener.py and
-agent/alerting.py for the full list):
-    MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, MQTT_USE_TLS,
-    MQTT_TOPIC_SUB (default "quality/+/events"),
-    MQTT_TOPIC_PUB (default "quality/alerts")
-
-Until real EMQX credentials and a confirmed message schema are available
-(see plan.md / IntelliMake_Architecture.pdf open items), this defaults to
-localhost:1883 so it can be exercised against a local test broker — see
-mock_publisher.py in this same directory to simulate incoming readings.
-
-Also note: there is currently no persistence for a trained model, so this
-script trains one from simulated data on startup before it starts listening.
-Once real training data/a model registry exists, replace _bootstrap_model()
-with loading a previously trained pipeline instead of retraining every run.
-"""
+# Standalone Quality Monitoring Agent process — Listener -> Detection -> Alerting,
+# matching IntelliMake_Architecture.pdf section 2.
+#
+# This is NOT the Streamlit app (that's a human-facing dashboard for walking
+# through Setup/Data/Learning/Operate by hand). This script is the long-running
+# process that would actually sit behind EMQX in production: it listens for
+# live sensor readings, scores each finished vehicle against an already-trained
+# model, and publishes the result back out as an alert.
+#
+# Run:
+#     python stream_quality_agent.py
+#
+# Configuration (environment variables — see agent/mqtt_listener.py and
+# agent/alerting.py for the full list):
+#     MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, MQTT_USE_TLS,
+#     MQTT_TOPIC_SUB (default "quality/+/events"),
+#     MQTT_TOPIC_PUB (default "quality/alerts")
+#
+# Until real EMQX credentials and a confirmed message schema are available
+# (see plan.md / IntelliMake_Architecture.pdf open items), this defaults to
+# localhost:1883 so it can be exercised against a local test broker — see
+# mock_publisher.py in this same directory to simulate incoming readings.
+#
+# Also note: there is currently no persistence for a trained model, so this
+# script trains one from simulated data on startup before it starts listening.
+# Once real training data/a model registry exists, replace _bootstrap_model()
+# with loading a previously trained pipeline instead of retraining every run.
 import logging
 import sys
 from pathlib import Path
@@ -42,11 +40,9 @@ logger = logging.getLogger("stream_quality_agent")
 
 
 def _bootstrap_model(agent: QualityMonitoringAgent):
-    """
-    Placeholder until a trained model can be loaded from storage: registers
-    the default facility and trains once on simulated data so the Detection
-    stage has a model ready before the listener starts.
-    """
+    # Placeholder until a trained model can be loaded from storage: registers
+    # the default facility and trains once on simulated data so the Detection
+    # stage has a model ready before the listener starts.
     logger.info("Bootstrapping: registering facility and training on simulated data...")
     agent.setup()
     agent.confirm_setup()

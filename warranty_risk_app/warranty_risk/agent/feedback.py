@@ -1,13 +1,11 @@
-"""
-Closes the loop between predictions and outcomes: after each Learning run,
-checks how well each sensor's out-of-tolerance signal actually correlated
-with real warranty claims, and nudges that sensor's risk_weight accordingly.
-
-This is the agent's self-improvement mechanism — each run on new data makes
-its own risk weighting a little more accurate than the last, instead of
-staying fixed forever. It only adjusts *scoring weights*, never equipment or
-process parameters — a human still confirms and acts on recommendations.
-"""
+# Closes the loop between predictions and outcomes: after each Learning run,
+# checks how well each sensor's out-of-tolerance signal actually correlated
+# with real warranty claims, and nudges that sensor's risk_weight accordingly.
+#
+# This is the agent's self-improvement mechanism — each run on new data makes
+# its own risk weighting a little more accurate than the last, instead of
+# staying fixed forever. It only adjusts *scoring weights*, never equipment or
+# process parameters — a human still confirms and acts on recommendations.
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -32,14 +30,12 @@ def compute_weight_adjustments(
     config: dict,
     step: float = 0.15,
 ) -> list:
-    """
-    For each GA-optimized sensor, correlate "was this vehicle's reading out
-    of the optimized tolerance band" against the actual warranty_claim label.
-    A sensor whose out-of-tolerance flag tracks real claims more than its
-    current weight assumes gets nudged up; one that doesn't predict claims
-    at all gets nudged down. Returns a list of WeightAdjustment (empty if the
-    GA didn't succeed or there's no label column to compare against).
-    """
+    # For each GA-optimized sensor, correlate "was this vehicle's reading out
+    # of the optimized tolerance band" against the actual warranty_claim label.
+    # A sensor whose out-of-tolerance flag tracks real claims more than its
+    # current weight assumes gets nudged up; one that doesn't predict claims
+    # at all gets nudged down. Returns a list of WeightAdjustment (empty if the
+    # GA didn't succeed or there's no label column to compare against).
     if not ga_result.get("success") or "warranty_claim" not in feature_df.columns:
         return []
 
@@ -78,7 +74,7 @@ def compute_weight_adjustments(
 
 
 def apply_weight_adjustments(config: dict, adjustments: list) -> dict:
-    """Writes adjusted weights back into a copy of the config's sensors."""
+    # Writes adjusted weights back into a copy of the config's sensors.
     by_uid = {a.sensor_uid: a.new_weight for a in adjustments}
     for station in config.get("stations", []):
         for sensor in station.get("sensors", []):
@@ -89,8 +85,8 @@ def apply_weight_adjustments(config: dict, adjustments: list) -> dict:
 
 
 def _explicitly_excluded(config: dict) -> set:
-    """Sensors marked risk_weight: "excluded" are a deliberate domain judgment
-    (e.g. cosmetic, no functional correlation) — the feedback loop leaves them alone."""
+    # Sensors marked risk_weight: "excluded" are a deliberate domain judgment
+    #     (e.g. cosmetic, no functional correlation) — the feedback loop leaves them alone.
     excluded = set()
     for station in config.get("stations", []):
         for sensor in station.get("sensors", []):

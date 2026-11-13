@@ -1,15 +1,13 @@
-"""
-WarrantyRiskPipeline — end-to-end orchestrator.
-
-Usage
------
-    from warranty_risk.pipeline import WarrantyRiskPipeline
-
-    pipe = WarrantyRiskPipeline()
-    pipe.run()
-    print(pipe.results_df)
-    print(pipe.lime_result["lime_df"])
-"""
+# WarrantyRiskPipeline — end-to-end orchestrator.
+#
+# Usage
+# -----
+#     from warranty_risk.pipeline import WarrantyRiskPipeline
+#
+#     pipe = WarrantyRiskPipeline()
+#     pipe.run()
+#     print(pipe.results_df)
+#     print(pipe.lime_result["lime_df"])
 from pathlib import Path
 
 from .config import load_config, get_stations
@@ -31,11 +29,9 @@ from .explanation.lime_explainer import explain_vehicle, explain_instance_row, g
 
 
 class WarrantyRiskPipeline:
-    """
-    Runs the full pipeline and stores every intermediate artifact as
-    an attribute so callers (Streamlit app, notebooks, tests) can inspect
-    any stage without re-running it.
-    """
+    # Runs the full pipeline and stores every intermediate artifact as
+    # an attribute so callers (Streamlit app, notebooks, tests) can inspect
+    # any stage without re-running it.
 
     def __init__(
         self,
@@ -80,11 +76,9 @@ class WarrantyRiskPipeline:
 
     # ------------------------------------------------------------------
     def run(self, explain_vehicle_idx: int = None) -> "WarrantyRiskPipeline":
-        """
-        Execute all pipeline stages in order.
-        Pass explain_vehicle_idx to explain a specific test-set row index;
-        defaults to the highest-risk vehicle.
-        """
+        # Execute all pipeline stages in order.
+        # Pass explain_vehicle_idx to explain a specific test-set row index;
+        # defaults to the highest-risk vehicle.
         self._stage_simulate()
         self._stage_labels()
         self._stage_optimize()
@@ -113,12 +107,10 @@ class WarrantyRiskPipeline:
         )
 
     def fit_tolerance(self, feature_df, train_idx):
-        """
-        Fit the GA tolerance bounds on the TRAIN vehicles only, then compute
-        the tolerance features for every vehicle from those bounds. Returns
-        (ga_result, feature_df_with_tolerance_columns) without touching state,
-        so validation can repeat it for other splits.
-        """
+        # Fit the GA tolerance bounds on the TRAIN vehicles only, then compute
+        # the tolerance features for every vehicle from those bounds. Returns
+        # (ga_result, feature_df_with_tolerance_columns) without touching state,
+        # so validation can repeat it for other splits.
         ga = run_ga_optimization(
             feature_df=feature_df.loc[train_idx],
             sensor_cols=self.sensor_cols,
@@ -200,17 +192,15 @@ class WarrantyRiskPipeline:
 
     # ------------------------------------------------------------------
     def score_new_vehicle(self, readings_df) -> dict:
-        """
-        Score one new vehicle's raw sensor readings against the already-
-        trained model — the "Detection" stage of a live stream, as opposed
-        to _stage_explain which only explains a row already in the test split.
-
-        readings_df: rows shaped like manufacturing_df, for exactly one
-        serial_number (serial_number, station_uid, sensor_uid, sensor_type,
-        timestamp, value).
-
-        Returns a dict: {vehicle_id, proba, lime_df, exp}
-        """
+        # Score one new vehicle's raw sensor readings against the already-
+        # trained model — the "Detection" stage of a live stream, as opposed
+        # to _stage_explain which only explains a row already in the test split.
+        #
+        # readings_df: rows shaped like manufacturing_df, for exactly one
+        # serial_number (serial_number, station_uid, sensor_uid, sensor_type,
+        # timestamp, value).
+        #
+        # Returns a dict: {vehicle_id, proba, lime_df, exp}
         if self.train_result is None:
             raise RuntimeError("No trained model yet — run Learning before scoring a live vehicle.")
 

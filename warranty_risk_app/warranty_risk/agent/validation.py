@@ -1,14 +1,12 @@
-"""
-Statistical validation for the Learning phase: reporting a single F1 from
-one training run doesn't say anything about how stable that number is.
-
-Each run repeats the WHOLE leakage-free procedure with a different seed:
-new train / validation / test vehicle split, tolerance bounds re-fit on that
-run's train vehicles only, model and threshold chosen on validation, metrics
-reported on the held-out test vehicles. Reports mean +/- standard deviation
-plus a trivial no-learning baseline, so a reported metric is defensible
-rather than a single lucky (or unlucky) draw.
-"""
+# Statistical validation for the Learning phase: reporting a single F1 from
+# one training run doesn't say anything about how stable that number is.
+#
+# Each run repeats the WHOLE leakage-free procedure with a different seed:
+# new train / validation / test vehicle split, tolerance bounds re-fit on that
+# run's train vehicles only, model and threshold chosen on validation, metrics
+# reported on the held-out test vehicles. Reports mean +/- standard deviation
+# plus a trivial no-learning baseline, so a reported metric is defensible
+# rather than a single lucky (or unlucky) draw.
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -38,12 +36,10 @@ class ValidationResult:
 
 
 def _baseline_f1(tr: dict) -> float:
-    """
-    Trivial baseline on the run's test vehicles: flag a vehicle as a claim if
-    it is out of tolerance on at least one sensor (bounds fit on that run's
-    train vehicles), with no learning. Without tolerance features, predicts
-    no claims, which scores 0 F1 for the minority class.
-    """
+    # Trivial baseline on the run's test vehicles: flag a vehicle as a claim if
+    # it is out of tolerance on at least one sensor (bounds fit on that run's
+    # train vehicles), with no learning. Without tolerance features, predicts
+    # no claims, which scores 0 F1 for the minority class.
     X_test, y_test = tr["X_test"], tr["y_test"]
     if "out_of_tolerance_count" in X_test.columns:
         preds = (X_test["out_of_tolerance_count"] > 0).astype(int)
@@ -53,15 +49,13 @@ def _baseline_f1(tr: dict) -> float:
 
 
 def validate_learning(pipe, n_runs: int = 5, refit_ga: bool = True) -> ValidationResult:
-    """
-    Repeat the split / tolerance-fit / select / evaluate procedure n_runs times.
-
-    refit_ga=True (default) re-optimises tolerance bounds on each run's own
-    train vehicles, which is the honest estimate but costs one GA run per seed.
-    refit_ga=False reuses the pipeline's existing bounds (fit on the pipeline's
-    train split), which is faster but leaks labels from the other runs' test
-    vehicles into the tolerance features; use it only for quick smoke checks.
-    """
+    # Repeat the split / tolerance-fit / select / evaluate procedure n_runs times.
+    #
+    # refit_ga=True (default) re-optimises tolerance bounds on each run's own
+    # train vehicles, which is the honest estimate but costs one GA run per seed.
+    # refit_ga=False reuses the pipeline's existing bounds (fit on the pipeline's
+    # train split), which is faster but leaks labels from the other runs' test
+    # vehicles into the tolerance features; use it only for quick smoke checks.
     from ..prediction.models import train_and_select, split_vehicles
 
     if pipe.ml_data is None or pipe.feature_df_pre_opt is None:

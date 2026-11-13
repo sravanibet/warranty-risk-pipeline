@@ -1,8 +1,6 @@
-"""
-Alerting stage of the IntelliMake Quality Monitoring Agent — publishes the
-Detection stage's output back to a dedicated MQTT topic, so results are
-themselves a consumable stream (per IntelliMake_Architecture.pdf section 2).
-"""
+# Alerting stage of the IntelliMake Quality Monitoring Agent — publishes the
+# Detection stage's output back to a dedicated MQTT topic, so results are
+# themselves a consumable stream (per IntelliMake_Architecture.pdf section 2).
 import json
 import logging
 import os
@@ -51,7 +49,7 @@ class MQTTAlerter:
             return False
 
     def publish_operate_result(self, operate_result) -> bool:
-        """Publishes an OperateResult (from orchestrator.score_vehicle_from_readings) as JSON."""
+        # Publishes an OperateResult (from orchestrator.score_vehicle_from_readings) as JSON.
         payload = {
             "vehicle_id": operate_result.vehicle_id,
             "probability": operate_result.probability,

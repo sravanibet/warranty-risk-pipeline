@@ -1,8 +1,9 @@
-"""
-Validates a plant configuration dict against the shape the pipeline needs.
-Collects every problem in one pass instead of stopping at the first one, so
-the agent can report everything wrong with a config at once.
-"""
+#
+#Validates a plant configuration dict against the shape the pipeline needs.
+#Collects every problem in one pass instead of stopping at the first one, so
+#the agent can report everything wrong with a config at once.
+
+
 from dataclasses import dataclass, field
 
 REQUIRED_TOP_LEVEL = ["plant_id", "plant_name", "stations"]

@@ -9,17 +9,15 @@ def compute_tolerance_features(
     sensors_opt: list,
     sensor_rename_inv: dict,
 ) -> pd.DataFrame:
-    """
-    Derive two binary/count features from GA-optimized bounds.
-
-    For each vehicle, check whether each sensor mean falls within its
-    optimized [lower, upper] interval. Returns feature_df with two
-    new columns appended (does not mutate input).
-
-    Columns added:
-        within_tolerance_all    — 1 if ALL sensors in bounds, else 0
-        out_of_tolerance_count  — number of sensors outside bounds (0–N)
-    """
+    # Derive two binary/count features from GA-optimized bounds.
+    #
+    # For each vehicle, check whether each sensor mean falls within its
+    # optimized [lower, upper] interval. Returns feature_df with two
+    # new columns appended (does not mutate input).
+    #
+    #  Columns added:
+    #     within_tolerance_all    — 1 if ALL sensors in bounds, else 0
+    #     out_of_tolerance_count  — number of sensors outside bounds (0–N)
     df = feature_df.copy()
 
     real_names = [sensor_rename_inv[s] for s in sensors_opt]

@@ -1,36 +1,34 @@
-"""
-Listener stage of the IntelliMake Quality Monitoring Agent
-(Listener -> Detection -> Alerting, per IntelliMake_Architecture.pdf).
-
-Subscribes to a topic where sensor readings are published one at a time,
-buffers them per vehicle (serial_number), and calls a callback with a
-complete DataFrame of that vehicle's readings once every sensor registered
-in the plant config has reported — the "sliding window" the architecture
-doc describes, keyed by vehicle rather than by wall-clock time since a
-vehicle's pass through the line is the natural window boundary here.
-
-Expected message schema (until IntelliMake's actual schema is confirmed):
-    topic:   quality/<station_uid>/events
-    payload: JSON — {"serial_number", "station_uid", "sensor_uid",
-                      "sensor_type", "timestamp", "value"}
-This mirrors the row shape already used internally by manufacturing_df, so
-a completed window can be handed directly to the existing detection code
-(WarrantyRiskPipeline.score_new_vehicle) with no reshaping.
-
-Connection is configured entirely from environment variables so no
-credentials are hardcoded, and everything degrades to "disabled" rather
-than crashing if paho-mqtt isn't installed or the broker is unreachable —
-same pattern as narration.py's Gemini fallback.
-
-Reliability notes:
-  - Incomplete windows (a vehicle that never finishes reporting) are swept
-    and dropped after MQTT_WINDOW_TIMEOUT_SECONDS, instead of buffering
-    forever — an unbounded buffer is a real memory leak under live traffic.
-  - Duplicate redeliveries (MQTT QoS 1 can redeliver the same message) are
-    deduplicated per vehicle before being counted toward window completion.
-  - The client auto-reconnects on an unexpected disconnect; on_disconnect
-    just logs and lets paho's own reconnect loop take over.
-"""
+# Listener stage of the IntelliMake Quality Monitoring Agent
+# (Listener -> Detection -> Alerting, per IntelliMake_Architecture.pdf).
+#
+# Subscribes to a topic where sensor readings are published one at a time,
+# buffers them per vehicle (serial_number), and calls a callback with a
+# complete DataFrame of that vehicle's readings once every sensor registered
+# in the plant config has reported — the "sliding window" the architecture
+# doc describes, keyed by vehicle rather than by wall-clock time since a
+# vehicle's pass through the line is the natural window boundary here.
+#
+# Expected message schema (until IntelliMake's actual schema is confirmed):
+#     topic:   quality/<station_uid>/events
+#     payload: JSON — {"serial_number", "station_uid", "sensor_uid",
+#                       "sensor_type", "timestamp", "value"}
+# This mirrors the row shape already used internally by manufacturing_df, so
+# a completed window can be handed directly to the existing detection code
+# (WarrantyRiskPipeline.score_new_vehicle) with no reshaping.
+#
+# Connection is configured entirely from environment variables so no
+# credentials are hardcoded, and everything degrades to "disabled" rather
+# than crashing if paho-mqtt isn't installed or the broker is unreachable —
+# same pattern as narration.py's Gemini fallback.
+#
+# Reliability notes:
+#   - Incomplete windows (a vehicle that never finishes reporting) are swept
+#     and dropped after MQTT_WINDOW_TIMEOUT_SECONDS, instead of buffering
+#     forever — an unbounded buffer is a real memory leak under live traffic.
+#   - Duplicate redeliveries (MQTT QoS 1 can redeliver the same message) are
+#     deduplicated per vehicle before being counted toward window completion.
+#   - The client auto-reconnects on an unexpected disconnect; on_disconnect
+#     just logs and lets paho's own reconnect loop take over.
 import json
 import logging
 import os
@@ -55,17 +53,15 @@ DEFAULT_SWEEP_INTERVAL_SECONDS = 30
 class MQTTListener:
     def __init__(self, expected_sensor_uids: list, on_window_complete,
                  config: dict = None, on_window_timeout=None):
-        """
-        expected_sensor_uids : sensor_uids that must all be present before a
-                                vehicle's window is considered complete
-        on_window_complete   : callback(readings_df) called once per vehicle
-        on_window_timeout    : optional callback(serial_number, readings) called
-                                when a vehicle's window is dropped for staleness
-        config               : optional overrides; falls back to env vars:
-                                MQTT_HOST, MQTT_PORT, MQTT_USERNAME,
-                                MQTT_PASSWORD, MQTT_USE_TLS, MQTT_TOPIC_SUB,
-                                MQTT_WINDOW_TIMEOUT_SECONDS
-        """
+        # expected_sensor_uids : sensor_uids that must all be present before a
+        #                         vehicle's window is considered complete
+        # on_window_complete   : callback(readings_df) called once per vehicle
+        # on_window_timeout    : optional callback(serial_number, readings) called
+        #                         when a vehicle's window is dropped for staleness
+        # config               : optional overrides; falls back to env vars:
+        #                         MQTT_HOST, MQTT_PORT, MQTT_USERNAME,
+        #                         MQTT_PASSWORD, MQTT_USE_TLS, MQTT_TOPIC_SUB,
+        #                         MQTT_WINDOW_TIMEOUT_SECONDS
         cfg = config or {}
         self.host       = cfg.get("host") or os.environ.get("MQTT_HOST", "localhost")
         self.port       = int(cfg.get("port") or os.environ.get("MQTT_PORT", 1883))
@@ -172,9 +168,9 @@ class MQTTListener:
                 logger.exception("on_window_complete callback failed for vehicle %s", vid)
 
     def _sweep_stale_windows(self):
-        """Runs in a background thread — drops any vehicle buffer that's been
-        incomplete for longer than window_timeout_seconds, so a vehicle that
-        never finishes reporting doesn't buffer in memory forever."""
+        # Runs in a background thread — drops any vehicle buffer that's been
+        #         incomplete for longer than window_timeout_seconds, so a vehicle that
+        #         never finishes reporting doesn't buffer in memory forever.
         while not self._sweep_stop.wait(DEFAULT_SWEEP_INTERVAL_SECONDS):
             now = time.monotonic()
             stale_vids = []

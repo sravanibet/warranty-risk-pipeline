@@ -1,19 +1,17 @@
-"""
-Persists a trained model between runs, so Learning doesn't have to retrain
-from scratch every time the process restarts — and keeps every past version
-instead of overwriting, so a worse model can be rolled back to a better one.
-
-Each save writes a timestamped directory under outputs/models/ containing:
-    model.joblib      — the trained sklearn estimator
-    scaler.joblib      — the fitted StandardScaler
-    metadata.json       — feat_cols, best_name, metrics, timestamp, and the
-                          preprocessing needed to score new data (category map,
-                          sensor layout) so a reloaded model encodes inputs
-                          exactly as it was trained to
-
-outputs/models/latest.json points at the most recent save's directory name,
-so load_latest() doesn't need to list and sort directories itself.
-"""
+# Persists a trained model between runs, so Learning doesn't have to retrain
+# from scratch every time the process restarts — and keeps every past version
+# instead of overwriting, so a worse model can be rolled back to a better one.
+#
+# Each save writes a timestamped directory under outputs/models/ containing:
+#     model.joblib      — the trained sklearn estimator
+#     scaler.joblib      — the fitted StandardScaler
+#     metadata.json       — feat_cols, best_name, metrics, timestamp, and the
+#                           preprocessing needed to score new data (category map,
+#                           sensor layout) so a reloaded model encodes inputs
+#                           exactly as it was trained to
+#
+# outputs/models/latest.json points at the most recent save's directory name,
+# so load_latest() doesn't need to list and sort directories itself.
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -37,11 +35,9 @@ class ModelRecord:
 
 
 def save(train_result: dict, f1: float, preprocessing: dict = None) -> Path:
-    """
-    Saves the best trained model from a Learning run. Returns the save directory.
-    preprocessing: JSON-serialisable dict with category_map, sensor_uids and
-    max_seq_len from training time.
-    """
+    # Saves the best trained model from a Learning run. Returns the save directory.
+    # preprocessing: JSON-serialisable dict with category_map, sensor_uids and
+    # max_seq_len from training time.
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     save_dir = _MODELS_DIR / timestamp
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +63,7 @@ def save(train_result: dict, f1: float, preprocessing: dict = None) -> Path:
 
 
 def load_latest() -> ModelRecord:
-    """Loads the most recently saved model. Returns None if nothing has been saved yet."""
+    # Loads the most recently saved model. Returns None if nothing has been saved yet.
     pointer_path = _MODELS_DIR / "latest.json"
     if not pointer_path.exists():
         return None
@@ -77,7 +73,7 @@ def load_latest() -> ModelRecord:
 
 
 def load(timestamp: str) -> ModelRecord:
-    """Loads a specific saved model by its timestamp directory name."""
+    # Loads a specific saved model by its timestamp directory name.
     save_dir = _MODELS_DIR / timestamp
     with open(save_dir / "metadata.json") as f:
         metadata = json.load(f)
@@ -95,7 +91,7 @@ def load(timestamp: str) -> ModelRecord:
 
 
 def list_saved() -> list:
-    """Returns metadata for every saved model, most recent first."""
+    # Returns metadata for every saved model, most recent first.
     if not _MODELS_DIR.exists():
         return []
     records = []
